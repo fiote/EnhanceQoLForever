@@ -46,6 +46,26 @@ local function hasSelection(filter)
 	return false
 end
 
+-- Panel and spell editors share the same class/talent filters. An entry ID
+-- selects the spell's settings without changing the containing panel.
+local function getFilterTarget(self, panelId, entryId)
+	local panel = self:GetPanel(panelId)
+	if entryId ~= nil then return panel and panel.entries and panel.entries[entryId], panel end
+	return panel, panel
+end
+
+local function commitFilter(self, panelId, panel, entryId)
+	self:RebuildSpellIndex()
+	if entryId ~= nil then
+		self:CommitEntrySpecFilter(panelId, panel)
+	else
+		self:RefreshPanel(panelId)
+	end
+	self:UpdateCursorAnchorState()
+	-- MultiDropdown refresh remains deferred until its menu closes.
+	if self.BlizzardEditor and self.BlizzardEditor.frame and self.BlizzardEditor.frame:IsShown() then self.BlizzardEditor:Refresh() end
+end
+
 function CooldownPanels:GetPanelClassFilter(panel)
 	if not panel then return nil end
 	if panel.foreverUseSpecFilter == true then
@@ -116,15 +136,15 @@ function CooldownPanels:GetPanelClassFilterLabel(panel)
 	return table.concat(labels, ", ")
 end
 
-function CooldownPanels:IsPanelClassFilterOptionSelected(panelId, value)
-	local filter = self:GetPanelClassFilter(self:GetPanel(panelId))
+function CooldownPanels:IsPanelClassFilterOptionSelected(panelId, value, entryId)
+	local filter = self:GetPanelClassFilter(getFilterTarget(self, panelId, entryId))
 	if value == "__all" then return filter == nil end
 	local classID = tonumber(value)
 	return classID ~= nil and filter ~= nil and (filter[classID] == true or filter[tostring(classID)] == true)
 end
 
-function CooldownPanels:SetPanelClassFilterOptionSelected(panelId, value, selected)
-	local panel = self:GetPanel(panelId)
+function CooldownPanels:SetPanelClassFilterOptionSelected(panelId, value, selected, entryId)
+	local panel, owner = getFilterTarget(self, panelId, entryId)
 	if not panel then return end
 	if value == "__all" then
 		if not selected then return end
@@ -146,11 +166,7 @@ function CooldownPanels:SetPanelClassFilterOptionSelected(panelId, value, select
 		filter[classID] = selected == true or nil
 		panel.classFilter = filter
 	end
-	self:RebuildSpellIndex()
-	self:RefreshPanel(panelId)
-	self:UpdateCursorAnchorState()
-	-- The Edit Mode library defers its own settings refresh until the menu closes.
-	if self.BlizzardEditor and self.BlizzardEditor.frame and self.BlizzardEditor.frame:IsShown() then self.BlizzardEditor:Refresh() end
+	commitFilter(self, panelId, owner, entryId)
 end
 
 function CooldownPanels:GetForeverTalentFilterOptions()
@@ -181,15 +197,15 @@ function CooldownPanels:GetForeverTalentFilterLabel(panel)
 	return #labels > 0 and table.concat(labels, ", ") or UNKNOWN
 end
 
-function CooldownPanels:IsForeverTalentFilterOptionSelected(panelId, value)
-	local panel = self:GetPanel(panelId)
+function CooldownPanels:IsForeverTalentFilterOptionSelected(panelId, value, entryId)
+	local panel = getFilterTarget(self, panelId, entryId)
 	local filter = self:GetForeverTalentFilter(panel)
 	if value == "__all" then return not hasSelection(filter) end
 	return filter ~= nil and (filter[value] == true or filter[tostring(value)] == true)
 end
 
-function CooldownPanels:SetForeverTalentFilterOptionSelected(panelId, value, selected)
-	local panel = self:GetPanel(panelId)
+function CooldownPanels:SetForeverTalentFilterOptionSelected(panelId, value, selected, entryId)
+	local panel, owner = getFilterTarget(self, panelId, entryId)
 	if not panel then return end
 	if value == "__all" then
 		if not selected then return end
@@ -205,21 +221,14 @@ function CooldownPanels:SetForeverTalentFilterOptionSelected(panelId, value, sel
 		panel.foreverTalentFilter[value] = selected == true or nil
 		if not hasSelection(panel.foreverTalentFilter) then panel.foreverTalentFilter = nil end
 	end
-	self:RebuildSpellIndex()
-	self:RefreshPanel(panelId)
-	self:UpdateCursorAnchorState()
-	-- MultiDropdown refresh remains deferred until its menu closes.
-	if self.BlizzardEditor and self.BlizzardEditor.frame and self.BlizzardEditor.frame:IsShown() then self.BlizzardEditor:Refresh() end
+	commitFilter(self, panelId, owner, entryId)
 end
 
-function CooldownPanels:SetForeverUseSpecFilter(panelId, enabled)
-	local panel = self:GetPanel(panelId)
+function CooldownPanels:SetForeverUseSpecFilter(panelId, enabled, entryId)
+	local panel, owner = getFilterTarget(self, panelId, entryId)
 	if not panel then return end
 	panel.foreverUseSpecFilter = enabled == true or nil
-	self:RebuildSpellIndex()
-	self:RefreshPanel(panelId)
-	self:UpdateCursorAnchorState()
-	if self.BlizzardEditor and self.BlizzardEditor.frame and self.BlizzardEditor.frame:IsShown() then self.BlizzardEditor:Refresh() end
+	commitFilter(self, panelId, owner, entryId)
 end
 
 function CooldownPanels:PanelAllowsForeverTalent(panel)

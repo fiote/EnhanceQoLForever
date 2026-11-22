@@ -2986,6 +2986,11 @@ function Helper.UpdatePanelEntrySpecFilterState(panel)
 	Helper.entrySpecFilterPanels = Helper.entrySpecFilterPanels or setmetatable({}, { __mode = "k" })
 	Helper.entrySpecFilterGenerations = Helper.entrySpecFilterGenerations or setmetatable({}, { __mode = "k" })
 	for _, entry in pairs(panel.entries) do
+		if CooldownPanels.EntryHasSpecFilter and CooldownPanels.EntryHasSpecFilter(entry) then
+			Helper.entrySpecFilterPanels[panel] = true
+			Helper.entrySpecFilterGenerations[panel] = (Helper.entrySpecFilterGenerations[panel] or 0) + 1
+			return
+		end
 		if Helper.IsHeroSpecFilterEnabled(entry) and CooldownPanels.GetEntryHeroSpecOptions then
 			Helper.entrySpecFilterPanels[panel] = true
 			Helper.entrySpecFilterGenerations[panel] = (Helper.entrySpecFilterGenerations[panel] or 0) + 1

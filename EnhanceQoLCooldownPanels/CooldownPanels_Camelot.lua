@@ -1540,14 +1540,12 @@ function CooldownPanels:GetEntrySpecFilteredOrder(panelId, panel, sourceOrder, c
 		return runtime._eqolEntrySpecFilterOrder
 	end
 	local filteredOrder = {}
-	if currentSpecId then
-		for _, entryId in ipairs(sourceOrder or {}) do
-			local entry = panel.entries and panel.entries[entryId] or nil
-			if entry and CooldownPanels.EntryAllowsSpec(entry, currentSpecId) then
-				filteredOrder[#filteredOrder + 1] = entryId
-			elseif entry then
-				CooldownPanels.ClearReadyGlowEntryState(panelId, entryId, true)
-			end
+	for _, entryId in ipairs(sourceOrder or {}) do
+		local entry = panel.entries and panel.entries[entryId] or nil
+		if entry and CooldownPanels.EntryAllowsSpec(entry, currentSpecId) then
+			filteredOrder[#filteredOrder + 1] = entryId
+		elseif entry then
+			CooldownPanels.ClearReadyGlowEntryState(panelId, entryId, true)
 		end
 	end
 	runtime._eqolEntrySpecFilterOrder = filteredOrder
@@ -4199,6 +4197,9 @@ cdp.ENTRY.STYLE_CLIPBOARD = {
 		racialVariantExclusions = true,
 		classTag = true,
 		specFilter = true,
+		classFilter = true,
+		foreverTalentFilter = true,
+		foreverUseSpecFilter = true,
 		heroSpecID = true,
 		heroSpecFilter = true,
 		heroSpecEnabled = true,
@@ -4390,7 +4391,7 @@ function cdp.ENTRY.CopyStyleValue(value) return Helper.CopyTableDeep(value) end
 -- Keep imported specialization IDs separate from Forever talent-group filters.
 local function getPlayerClassSpecMap() return nil end
 local function panelHasSpecFilter() return false end
-function CooldownPanels.EntryHasSpecFilter() return false end
+function CooldownPanels.EntryHasSpecFilter(entry) return CooldownPanels:HasPanelClassFilter(entry) end
 
 local function panelHasRuntimeEntries(panel)
 	if type(panel) ~= "table" or type(panel.entries) ~= "table" then return false end
@@ -4405,12 +4406,9 @@ panelAllowsSpec = function(panel)
 	return CooldownPanels:PanelAllowsClass(panel)
 end
 
-function CooldownPanels.EntryAllowsSpec(entry, currentSpecId)
-	if not CooldownPanels.EntryHasSpecFilter(entry) then return true end
-	local specId = currentSpecId or queryPlayerSpecId()
-	if not specId then return false end
-	local filter = entry and entry.specFilter
-	return filter and filter[specId] == true
+function CooldownPanels.EntryAllowsSpec(entry)
+	if entry and entry.foreverUseSpecFilter == true then return CooldownPanels:PanelAllowsForeverTalent(entry) end
+	return CooldownPanels:PanelAllowsClass(entry)
 end
 
 local function panelMatchesPlayerClass(panel) return CooldownPanels:PanelAllowsClass(panel) end
@@ -16456,17 +16454,57 @@ function CooldownPanels:OpenLayoutEntryStandaloneMenu(panelId, entryId, anchorFr
 			end,
 		},
 		{
-			name = L["CooldownPanelSpecFilter"] or "Show only for spec",
-			isShown = function() return false end,
+			name = L["CooldownPanelUseSpecFilter"],
+			kind = SettingType.Checkbox,
+			parentId = "cooldownPanelStandaloneDisplay",
+			navigationField = "foreverUseSpecFilter",
+			default = false,
+			get = function()
+				local _, currentEntry = getEntry()
+				return currentEntry and currentEntry.foreverUseSpecFilter == true or false
+			end,
+			set = function(_, value)
+				CooldownPanels:SetForeverUseSpecFilter(panelId, value, entryId)
+				refreshStandaloneSettings()
+			end,
+		},
+		{
+			name = CLASS,
 			kind = SettingType.MultiDropdown,
-			parentId = "cooldownPanelStandaloneVisibility",
-			customText = L["CooldownPanelSpecAny"] or "All specs",
+			parentId = "cooldownPanelStandaloneDisplay",
+			navigationField = "classFilter",
+			hideSummary = true,
+			isShown = function()
+				local _, currentEntry = getEntry()
+				return currentEntry and currentEntry.foreverUseSpecFilter ~= true or false
+			end,
+			navigationHint = function() return L["CooldownPanelUseSpecFilter"], nil, "cooldownPanelStandaloneDisplay" end,
+			customText = CooldownPanels:GetPanelClassFilterLabel(select(2, getEntry())),
 			height = 260,
 			get = function() return nil end,
 			set = function() end,
-			optionfunc = function() return CooldownPanels:GetEntrySpecFilterOptions() end,
-			isSelected = function(_, value) return CooldownPanels:IsEntrySpecFilterOptionSelected(panelId, entryId, value) end,
-			setSelected = function(_, value, selected) CooldownPanels:SetEntrySpecFilterOptionSelected(panelId, entryId, value, selected) end,
+			optionfunc = function() return CooldownPanels:GetPanelClassFilterOptions() end,
+			isSelected = function(_, value) return CooldownPanels:IsPanelClassFilterOptionSelected(panelId, value, entryId) end,
+			setSelected = function(_, value, selected) CooldownPanels:SetPanelClassFilterOptionSelected(panelId, value, selected, entryId) end,
+		},
+		{
+			name = L["CooldownPanelSpecFilter"],
+			kind = SettingType.MultiDropdown,
+			parentId = "cooldownPanelStandaloneDisplay",
+			navigationField = "foreverTalentFilter",
+			hideSummary = true,
+			isShown = function()
+				local _, currentEntry = getEntry()
+				return currentEntry and currentEntry.foreverUseSpecFilter == true or false
+			end,
+			navigationHint = function() return L["CooldownPanelUseSpecFilter"], nil, "cooldownPanelStandaloneDisplay" end,
+			customText = CooldownPanels:GetForeverTalentFilterLabel(select(2, getEntry())),
+			height = 260,
+			get = function() return nil end,
+			set = function() end,
+			optionfunc = function() return CooldownPanels:GetForeverTalentFilterOptions() end,
+			isSelected = function(_, value) return CooldownPanels:IsForeverTalentFilterOptionSelected(panelId, value, entryId) end,
+			setSelected = function(_, value, selected) CooldownPanels:SetForeverTalentFilterOptionSelected(panelId, value, selected, entryId) end,
 		},
 		{
 			name = L["CooldownPanelOverwriteGlobalDefault"] or "Overwrite global default",
@@ -25332,7 +25370,7 @@ function CooldownPanels:UpdateRuntimeIcons(panelId)
 	local visibleSlotCount = 0
 	local sourceOrder = panel.order or {}
 	local entrySpecFilterActive = Helper.PanelHasEntrySpecFilter and Helper.PanelHasEntrySpecFilter(panel) or false
-	local entrySpecFilterSpecId = entrySpecFilterActive and queryPlayerSpecId() or nil
+	local entrySpecFilterSpecId = entrySpecFilterActive and addon.functions and addon.functions.GetForeverPrimaryTalentGroup and addon.functions.GetForeverPrimaryTalentGroup() or nil
 	local order = entrySpecFilterActive and self:GetEntrySpecFilteredOrder(panelId, panel, sourceOrder, entrySpecFilterSpecId) or sourceOrder
 	local fixedSlotCount = 0
 	local fixedGridColumns = 0

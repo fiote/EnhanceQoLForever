@@ -13,11 +13,11 @@ local function fields(text)
 	return result
 end
 local scopes = {
-	Display = fields("requiredTalentSpellID"),
+	Display = fields("requiredTalentSpellID specFilter classFilter foreverUseSpecFilter foreverTalentFilter"),
 	Layout = fields("barPanelOrientation barPanelWidth barPanelHeight panelWidthMode panelWidth panelWidthSource panelWidthElement spacing direction wrapCount wrapDirection growthPoint radialRadius radialRotation radialArcDegrees strata rowSizes"),
 	Icon = fields("actionButtonAnchor actionButtonMatchSize actionButtonAutoLayer actionButtonStrata actionButtonFrameLevel actionButtonLevelOffset barPanelIconSize iconSize iconSizeSeparate iconWidth iconHeight iconOffsetX iconOffsetY iconSizeUseGlobal showIconTexture showIconTextureUseGlobal hideIcon iconShape iconZoom showCraftingQuality showCraftingQualityUseGlobal craftingQualityScale"),
 	Border = fields("iconBorderEnabled iconBorderTexture iconBorderSize iconBorderOffset iconBorderColor"),
-	Visibility = fields("showTooltips tooltipUseEditModePosition hideOnCooldown showOnCooldown cdmAuraAlwaysShowMode cdmAuraMissingOnlyMyOwn cdmAuraAlwaysShowUseGlobal cooldownVisibilityUseGlobal hideBorderOnCooldown hideBorderOffCooldown visibility hideInVehicle hideInPetBattle hideInClientScene opacityOutOfCombat opacityInCombat specFilter heroSpecID heroSpecFilter heroSpecEnabled"),
+	Visibility = fields("showTooltips tooltipUseEditModePosition hideOnCooldown showOnCooldown cdmAuraAlwaysShowMode cdmAuraMissingOnlyMyOwn cdmAuraAlwaysShowUseGlobal cooldownVisibilityUseGlobal hideBorderOnCooldown hideBorderOffCooldown visibility hideInVehicle hideInPetBattle hideInClientScene opacityOutOfCombat opacityInCombat heroSpecID heroSpecFilter heroSpecEnabled"),
 	Availability = fields("rangeOverlayEnabled rangeOverlayColor noDesaturation noDesaturationUseGlobal checkPower checkPowerUseGlobal powerTintColor hideWhenNoResource hideWhenNoResourceUseGlobal"),
 	CooldownText = fields("showCooldownText showCooldownTextUseGlobal cooldownTextUseGlobal cooldownTextFont cooldownTextSize cooldownTextStyle cooldownTextColor cooldownTextX cooldownTextY"),
 	StaticText = fields("staticText staticTextShowOnCooldown staticTextUseGlobal staticTextFont staticTextSize staticTextStyle staticTextColor staticTextAnchor staticTextX staticTextY"),
@@ -366,7 +366,7 @@ function Navigation.Build(settings, kind, panelId, entryId, groupId)
 				for _, field in ipairs(fieldsToReset) do target[field] = copy(defaults[field]) end
 				if kind == "panel" and suffix == "CooldownText" then target.auraOverlayTextSize = defaults.auraOverlayTextSize end
 				if kind == "entry" and suffix == "Activation" and Panels.ClearEntryCustomCooldownDuration then Panels:ClearEntryCustomCooldownDuration(panelId, entryId, true) end
-				if kind == "entry" and suffix == "Visibility" and Helper.UpdatePanelEntrySpecFilterState then Helper.UpdatePanelEntrySpecFilterState(panel) end
+				if kind == "entry" and (suffix == "Visibility" or suffix == "Display") and Helper.UpdatePanelEntrySpecFilterState then Helper.UpdatePanelEntrySpecFilterState(panel) end
 				if suffix == "Glow" and Panels.ClearReadyGlowEntryState then
 					if kind == "entry" then Panels.ClearReadyGlowEntryState(panelId, entryId, true)
 					else for id in pairs(panel.entries or {}) do Panels.ClearReadyGlowEntryState(panelId, id, true) end end
@@ -380,7 +380,7 @@ function Navigation.Build(settings, kind, panelId, entryId, groupId)
 				if kind == "entry" and bars and bars.HandleEntryStylePaste then
 					bars.HandleEntryStylePaste(panelId, entryId, target, bars.IsBarDisplayModeValue(target.displayMode))
 				end
-				refresh(kind, panelId, suffix == "Activation" or suffix == "AuraBehavior" or suffix == "Sound" or suffix == "Charges" or suffix == "Stacks" or suffix == "Visibility" or suffix == "Glow")
+				refresh(kind, panelId, suffix == "Activation" or suffix == "AuraBehavior" or suffix == "Sound" or suffix == "Charges" or suffix == "Stacks" or suffix == "Visibility" or suffix == "Display" or suffix == "Glow")
 			end
 		elseif kind == "fixed" and id ~= "cooldownPanelStandaloneFixedGroupGeneral" then
 			header.navigationReset = function()
