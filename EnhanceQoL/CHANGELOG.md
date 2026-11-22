@@ -1,0 +1,34 @@
+# Changelog
+
+## [13.23.0] - 2026-11-18
+
+### Added
+
+- Unit Frames: Customize portrait decorations, borders and their layers. Choose dragon or ring decorations, style level text, show the spell icon while casting, and mirror player and friendly NPC portraits on Target and Focus.
+- Unit Frames: Detached portraits and power bars support unit clicks, the unit menu and mouseover reveal.
+- Unit Frames: Added a Delves companion portrait decoration and customizable cast progress borders for round, square, star and hexagonal portraits, with an in-editor preview.
+- Bags: Add category separators, configure the New Items and Free Slots categories, and sort in either direction. At a merchant, right-click a category or group to sell up to 12 stacks.
+- Instant Messenger: Detach conversations into resizable windows that remember their positions, then dock them again. The character info bar shows available details, supports automatic lookups and party invites, and provides shortcuts to history and settings.
+- QuickActions: Customize menu backgrounds and borders, including filled or hollow radial backgrounds, class-colored borders and separate parent menu backgrounds.
+- Cooldown Panels: Set a separate font size for aura overlay timers.
+- Class Buff Reminder: Bind a key to cast the next missing self buff.
+- Resource Bars: Configure threshold lines and colors per talent tree.
+- Interface: Shamans can hide the Totem Action Bar independently of the regular totem frame.
+
+### Changed
+
+- Unit Frames: Portrait settings are grouped in a dedicated category with separate tabs.
+- DataPanel: The Micro Bar and its action menu use matching outline icons by default. Choose Blizzard icons, set a custom or class color for outline icons, and adjust spacing and tooltips.
+
+### Fixed
+
+- Bags: Items keep their positions while selling or transferring items at the bank. Empty slots remain until the interaction closes.
+- Instant Messenger: Links containing both https:// and www. display correctly, and the text cursor stays visible across font sizes.
+- Unit Frames: Star-shaped portraits display their border.
+- Class Buff Reminder: Centered icons stay aligned when the number of reminders changes.
+- Class Buff Reminder: Pet health appears beside the native buff icons.
+- Interface: The Hide Totembar setting correctly hides the Blizzard totem frame for Shamans.
+- Unit Frames: Entering Edit Mode with the pet target frame enabled no longer raises an error.
+- Cooldown Panels: Spells with a shared cooldown update together when either spell is used.
+- Blizzard XP and reputation bars: Resizing keeps the fill and dividers aligned, including after UI scale changes.
+- Character Frame: The durability icon fits alongside the pet tab.

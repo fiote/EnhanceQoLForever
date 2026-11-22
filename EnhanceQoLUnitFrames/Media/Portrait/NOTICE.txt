@@ -1,0 +1,47 @@
+# Portrait dragon frames
+
+`DragonFrames.blp` is Blizzard Entertainment artwork, not covered by the addon
+code license. All artwork rights remain with the respective rights holder.
+This local test candidate does not establish a general redistribution license.
+Review Blizzard's applicable terms before publishing copied client artwork.
+
+- Input: installed Forever 1.60.1.70938, FileDataID 8244544.
+- Format: BLP2, uncompressed 32-bit BGRA, 512 × 512, one mip level.
+- Alpha: 8-bit; fully transparent, partially transparent and opaque pixels exist.
+- The file is preserved byte for byte. UV rectangles use the `c60-2x` atlas
+  members for gold, silver and their winged variants. Coordinates and reference
+  sizes live in `UF_Helper.lua`; they do not depend on the destination client's
+  atlas overrides or FileDataID mapping.
+- Forever's ordinary atlas names resolve through client-specific overrides.
+  Retail's same names have different artwork; the installed TBC atlas table
+  lacks these members. The packaged texture supplies the same selectable art
+  for all three clients without depending on those names.
+- The runtime loads this file from the owning child addon. Both flavor builders
+  preserve this media directory; converter tools and inspection PNGs stay out
+  of the addon.
+
+Blizzard UI Add-On Development Policy:
+https://eu.forums.blizzard.com/en/wow/t/wow-user-interface-add-on-development-policy/1642
+
+`StarBorder.tga` is a 64 × 64 uncompressed 32-bit TGA with 8-bit alpha. It
+outlines the existing `EnhanceQoL/Assets/StarShape.tga` mask: original alpha
+minus a 3 × 3 minimum-filtered alpha, with white RGB for runtime tinting.
+It is used only by Unit Frame portraits and does not change other icon menus.
+
+GoldRing.blp preserves the installed Forever client FileDataID 1729779: BLP2,
+256 × 256, uncompressed BGRA with 8-bit alpha and one mip level. It contains
+hud-playerframe-portraitring-large (UV pixels 1..187 on each axis). Retail and
+Forever use their native atlas when available; TBC uses this packaged fallback.
+The same Blizzard artwork rights and publication limitations above apply.
+
+RingCutout.tga is a procedural inverse-circle alpha mask (256x256 RGBA).
+It contains no game artwork and clears the opaque center of the native
+ChallengeMode-SpikeyStar atlas while preserving its decorative rim.
+
+DelvesCastRing.tga is a procedural white annulus texture (256x256 RGBA),
+containing no game artwork. It leaves the level badge clear when used over
+the native Delves portrait decoration.
+
+CastRingDisc.tga is a procedural white disc alpha mask (256x256 RGBA).
+Combined with the scaled inverse-circle mask, it sets the normal cast ring
+thickness without copying or modifying game artwork.
