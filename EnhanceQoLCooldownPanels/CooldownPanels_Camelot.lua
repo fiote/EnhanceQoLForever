@@ -1530,19 +1530,21 @@ end
 function CooldownPanels:GetEntrySpecFilteredOrder(panelId, panel, sourceOrder, currentSpecId)
 	local runtime = getRuntime(panelId)
 	local generation = Helper.GetPanelEntrySpecFilterGeneration and Helper.GetPanelEntrySpecFilterGeneration(panel) or 0
+	local currentStance = self:GetCurrentStanceFilterValue()
 	if
 		runtime._eqolEntrySpecFilterOrder
 		and runtime._eqolEntrySpecFilterSourceOrder == sourceOrder
 		and runtime._eqolEntrySpecFilterEntries == panel.entries
 		and runtime._eqolEntrySpecFilterGeneration == generation
 		and runtime._eqolEntrySpecFilterSpecId == currentSpecId
+		and runtime._eqolEntrySpecFilterStance == currentStance
 	then
 		return runtime._eqolEntrySpecFilterOrder
 	end
 	local filteredOrder = {}
 	for _, entryId in ipairs(sourceOrder or {}) do
 		local entry = panel.entries and panel.entries[entryId] or nil
-		if entry and CooldownPanels.EntryAllowsSpec(entry, currentSpecId) then
+		if entry and CooldownPanels.EntryAllowsRuntimeFilters(entry) then
 			filteredOrder[#filteredOrder + 1] = entryId
 		elseif entry then
 			CooldownPanels.ClearReadyGlowEntryState(panelId, entryId, true)
@@ -1553,6 +1555,7 @@ function CooldownPanels:GetEntrySpecFilteredOrder(panelId, panel, sourceOrder, c
 	runtime._eqolEntrySpecFilterEntries = panel.entries
 	runtime._eqolEntrySpecFilterGeneration = generation
 	runtime._eqolEntrySpecFilterSpecId = currentSpecId
+	runtime._eqolEntrySpecFilterStance = currentStance
 	return filteredOrder
 end
 
@@ -4200,6 +4203,7 @@ cdp.ENTRY.STYLE_CLIPBOARD = {
 		classFilter = true,
 		foreverTalentFilter = true,
 		foreverUseSpecFilter = true,
+		stanceFilter = true,
 		heroSpecID = true,
 		heroSpecFilter = true,
 		heroSpecEnabled = true,
@@ -4391,7 +4395,7 @@ function cdp.ENTRY.CopyStyleValue(value) return Helper.CopyTableDeep(value) end
 -- Keep imported specialization IDs separate from Forever talent-group filters.
 local function getPlayerClassSpecMap() return nil end
 local function panelHasSpecFilter() return false end
-function CooldownPanels.EntryHasSpecFilter(entry) return CooldownPanels:HasPanelClassFilter(entry) end
+function CooldownPanels.EntryHasSpecFilter(entry) return (entry and entry.stanceFilter ~= nil) or CooldownPanels:HasPanelClassFilter(entry) end
 
 local function panelHasRuntimeEntries(panel)
 	if type(panel) ~= "table" or type(panel.entries) ~= "table" then return false end
@@ -4409,6 +4413,12 @@ end
 function CooldownPanels.EntryAllowsSpec(entry)
 	if entry and entry.foreverUseSpecFilter == true then return CooldownPanels:PanelAllowsForeverTalent(entry) end
 	return CooldownPanels:PanelAllowsClass(entry)
+end
+
+-- Stance/form controls the live panel only; editor availability must not
+-- change when the player switches stance.
+function CooldownPanels.EntryAllowsRuntimeFilters(entry)
+	return CooldownPanels.EntryAllowsSpec(entry) and CooldownPanels:EntryAllowsStance(entry)
 end
 
 local function panelMatchesPlayerClass(panel) return CooldownPanels:PanelAllowsClass(panel) end
@@ -16505,6 +16515,31 @@ function CooldownPanels:OpenLayoutEntryStandaloneMenu(panelId, entryId, anchorFr
 			optionfunc = function() return CooldownPanels:GetForeverTalentFilterOptions() end,
 			isSelected = function(_, value) return CooldownPanels:IsForeverTalentFilterOptionSelected(panelId, value, entryId) end,
 			setSelected = function(_, value, selected) CooldownPanels:SetForeverTalentFilterOptionSelected(panelId, value, selected, entryId) end,
+		},
+		{
+			name = L["CooldownPanelStanceFilter"],
+			kind = SettingType.Dropdown,
+			parentId = "cooldownPanelStandaloneDisplay",
+			navigationField = "stanceFilter",
+			default = "__all",
+			height = 260,
+			isShown = function()
+				local _, currentEntry = getEntry()
+				return currentEntry and (currentEntry.stanceFilter ~= nil or #CooldownPanels:GetEntryStanceFilterOptions() > 1) or false
+			end,
+			get = function()
+				local _, currentEntry = getEntry()
+				return currentEntry and currentEntry.stanceFilter or "__all"
+			end,
+			set = function(_, value) CooldownPanels:SetEntryStanceFilter(panelId, entryId, value) end,
+			generator = function(_, root)
+				for _, option in ipairs(CooldownPanels:GetEntryStanceFilterOptions()) do
+					root:CreateRadio(option.text, function()
+						local _, currentEntry = getEntry()
+						return (currentEntry and currentEntry.stanceFilter or "__all") == option.value
+					end, function() CooldownPanels:SetEntryStanceFilter(panelId, entryId, option.value) end)
+				end
+			end,
 		},
 		{
 			name = L["CooldownPanelOverwriteGlobalDefault"] or "Overwrite global default",
@@ -33488,6 +33523,7 @@ CooldownPanels.UPDATE_FRAME_EVENTS = {
 	"INSTANCE_GROUP_SIZE_CHANGED",
 	"UPDATE_INSTANCE_INFO",
 	"UPDATE_SHAPESHIFT_FORM",
+	"UPDATE_SHAPESHIFT_FORMS",
 	"UPDATE_VEHICLE_ACTIONBAR",
 	"PLAYER_CAN_GLIDE_CHANGED",
 	"PLAYER_IS_GLIDING_CHANGED",

@@ -527,6 +527,74 @@ function Stance:IsEntryRelevant(entry)
 	return self:IsDefinitionKnown(def)
 end
 
+-- Persist spell IDs rather than form-bar indexes, which change as forms are learned.
+local function getFormFilterValue(classTag, spellID)
+	if not classTag or type(spellID) ~= "number" then return nil end
+	for _, def in pairs(STANCE_DEFINITIONS) do
+		if def.classTag == classTag then
+			for _, rankID in ipairs(def.spellIDs or {}) do
+				if spellID == rankID then spellID = def.spellID end
+			end
+		end
+	end
+	return classTag .. ":" .. tostring(spellID)
+end
+
+function CooldownPanels:GetCurrentStanceFilterValue()
+	local classTag = getPlayerClassTag()
+	local index = GetShapeshiftForm and GetShapeshiftForm()
+	if issecretvalue and issecretvalue(index) then return nil end
+	if type(index) ~= "number" then return nil end
+	if index == 0 then return getFormFilterValue(classTag, 0) end
+	if not GetShapeshiftFormInfo then return nil end
+	local _, _, _, spellID = GetShapeshiftFormInfo(index)
+	if issecretvalue and issecretvalue(spellID) then return nil end
+	return getFormFilterValue(classTag, spellID)
+end
+
+function CooldownPanels:GetEntryStanceFilterOptions()
+	local options = { { value = "__all", text = L["CooldownPanelStanceFilterAny"] } }
+	local classTag = getPlayerClassTag()
+	local count = GetNumShapeshiftForms and GetNumShapeshiftForms()
+	if issecretvalue and issecretvalue(count) then return options end
+	if not classTag or type(count) ~= "number" or count == 0 or not GetShapeshiftFormInfo then return options end
+	options[#options + 1] = {
+		value = getFormFilterValue(classTag, 0),
+		text = classTag == "DRUID" and L["CooldownPanelStanceFilterCaster"] or L["CooldownPanelStanceFilterNone"],
+	}
+	local seen = {}
+	for index = 1, count do
+		local _, _, _, spellID = GetShapeshiftFormInfo(index)
+		if not (issecretvalue and issecretvalue(spellID)) then
+			local value = getFormFilterValue(classTag, spellID)
+			local name = spellID and getSpellDisplayData(spellID)
+			if value and name and not seen[value] then
+				options[#options + 1] = { value = value, text = name }
+				seen[value] = true
+			end
+		end
+	end
+	return options
+end
+
+function CooldownPanels:EntryAllowsStance(entry)
+	return not (entry and entry.stanceFilter) or entry.stanceFilter == self:GetCurrentStanceFilterValue()
+end
+
+function CooldownPanels:SetEntryStanceFilter(panelId, entryId, value)
+	local panel = self:GetPanel(panelId)
+	local entry = panel and panel.entries and panel.entries[entryId]
+	if not entry then return end
+	for _, option in ipairs(self:GetEntryStanceFilterOptions()) do
+		if option.value == value then
+			entry.stanceFilter = value ~= "__all" and value or nil
+			self:RebuildSpellIndex()
+			self:CommitEntrySpecFilter(panelId, panel)
+			return
+		end
+	end
+end
+
 function CooldownPanels:GetStanceMenuEntries() return Stance:GetMenuEntries() end
 function CooldownPanels:GetStanceDefinition(value) return Stance:GetDefinition(value) end
 function CooldownPanels:GetStanceDefaultOverrides() return Stance:GetDefaultOverrides() end

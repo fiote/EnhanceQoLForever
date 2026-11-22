@@ -3264,6 +3264,7 @@ function Helper.NormalizeEntry(entry, defaults)
 	if entry.showCooldown == nil then entry.showCooldown = true end
 	if not hadShowCooldownTextUseGlobal or type(entry.showCooldownTextUseGlobal) ~= "boolean" then entry.showCooldownTextUseGlobal = entry.showCooldownText ~= false end
 	Helper.NormalizeHeroSpecFilter(entry)
+	if type(entry.stanceFilter) ~= "string" or entry.stanceFilter == "" or entry.stanceFilter == "__all" then entry.stanceFilter = nil end
 	if type(entry.specFilter) == "table" then
 		local cleanedSpecFilter
 		for specId, enabled in pairs(entry.specFilter) do
@@ -4577,7 +4578,7 @@ function Helper.GetCenterWarningEntries(panelId)
 		or Helper.NormalizeGrowthPoint(layout.growthPoint, Helper.PANEL_LAYOUT_DEFAULTS.growthPoint) ~= "TOP" then return blockers end
 	for _, entryId in ipairs(panel.order or {}) do
 		local entry = panel.entries and panel.entries[entryId]
-		if entry and (not CooldownPanels.EntryAllowsSpec or CooldownPanels.EntryAllowsSpec(entry)) then
+		if entry and (not CooldownPanels.EntryAllowsRuntimeFilters or CooldownPanels.EntryAllowsRuntimeFilters(entry)) then
 			if entry.type == "CDM_AURA" then hasAura = true end
 			-- Match the mixed-entry rejection in AuraContainers:ResolveGridGroupPlan.
 			if entry.type ~= "CDM_AURA" or entry.displayMode == "BAR" then blockers[#blockers + 1] = { id = entryId, entry = entry } end

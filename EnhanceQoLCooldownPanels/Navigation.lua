@@ -13,7 +13,7 @@ local function fields(text)
 	return result
 end
 local scopes = {
-	Display = fields("requiredTalentSpellID specFilter classFilter foreverUseSpecFilter foreverTalentFilter"),
+	Display = fields("requiredTalentSpellID specFilter classFilter foreverUseSpecFilter foreverTalentFilter stanceFilter"),
 	Layout = fields("barPanelOrientation barPanelWidth barPanelHeight panelWidthMode panelWidth panelWidthSource panelWidthElement spacing direction wrapCount wrapDirection growthPoint radialRadius radialRotation radialArcDegrees strata rowSizes"),
 	Icon = fields("actionButtonAnchor actionButtonMatchSize actionButtonAutoLayer actionButtonStrata actionButtonFrameLevel actionButtonLevelOffset barPanelIconSize iconSize iconSizeSeparate iconWidth iconHeight iconOffsetX iconOffsetY iconSizeUseGlobal showIconTexture showIconTextureUseGlobal hideIcon iconShape iconZoom showCraftingQuality showCraftingQualityUseGlobal craftingQualityScale"),
 	Border = fields("iconBorderEnabled iconBorderTexture iconBorderSize iconBorderOffset iconBorderColor"),

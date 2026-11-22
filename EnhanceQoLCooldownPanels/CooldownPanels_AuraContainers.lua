@@ -3379,7 +3379,7 @@ function AuraContainers:GetDynamicGroupMemberIds(panel, groupId)
 	local memberIds = {}
 	for _, entryId in ipairs(panel and panel.order or {}) do
 		local entry = panel.entries and panel.entries[entryId]
-		if entry and entry.fixedGroupId == groupId and (not CooldownPanels.EntryAllowsSpec or CooldownPanels.EntryAllowsSpec(entry)) then memberIds[#memberIds + 1] = entryId end
+		if entry and entry.fixedGroupId == groupId and (not CooldownPanels.EntryAllowsRuntimeFilters or CooldownPanels.EntryAllowsRuntimeFilters(entry)) then memberIds[#memberIds + 1] = entryId end
 	end
 	return memberIds
 end
@@ -3422,7 +3422,7 @@ function AuraContainers:ResolveGridGroupPlan(panelId, barGroupId)
 		baseIndex = nil
 		for _, entryId in ipairs(order) do
 			local entry = panel.entries[entryId]
-			if entry and (not CooldownPanels.EntryAllowsSpec or CooldownPanels.EntryAllowsSpec(entry)) then
+			if entry and (not CooldownPanels.EntryAllowsRuntimeFilters or CooldownPanels.EntryAllowsRuntimeFilters(entry)) then
 				for index, icon in ipairs(runtime and runtime.frame and runtime.frame.icons or {}) do
 					if icon.entryId == entryId then baseIndex = index; break end
 				end
@@ -3487,7 +3487,7 @@ function AuraContainers:ResolveGridGroupPlan(panelId, barGroupId)
 	for _, entryId in ipairs(order) do
 		local entry = panel.entries and panel.entries[entryId]
 		if entry and CooldownPanels.ActionButtonOverlays and CooldownPanels.ActionButtonOverlays:IsButtonName(entry.actionButtonAnchor) then return nil end
-		if entry and (not CooldownPanels.EntryAllowsSpec or CooldownPanels.EntryAllowsSpec(entry)) then
+			if entry and (not CooldownPanels.EntryAllowsRuntimeFilters or CooldownPanels.EntryAllowsRuntimeFilters(entry)) then
 			-- One native FlowLayout can pack only AuraGroup frames. Mixed Spell
 			-- and Item panels stay on the regular renderer.
 			if entry.type ~= ENTRY_TYPE or (Helper.IsBarEntry(entry) and not Helper.IsBarLayout(layout)) then return nil end
