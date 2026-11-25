@@ -1,5 +1,29 @@
 # Changelog
 
+## [13.24.2] - 2026-11-25
+
+### Added
+
+- Class Buff Reminder: The buff keybind can also cast buffs for your group.
+- Mover: Drag the trade window by its title bar.
+- Floating Loot: Optionally show skill gains and their new ranks. Set the alignment of the rows and the side of the accent line independently.
+- Experience Bar: Show session time, progress including completed quests, or quest and rested XP percentages. Text can be placed in two additional positions.
+- Navigation: Adjust the size of the 3D waypoint under Graphics & Game Options.
+
+### Changed
+
+- Floating Loot: The animation preview plays on all visible loot, roll, and reward rows.
+- Experience Bar: Quest and rested XP overlays appear side by side when both are enabled.
+- Experience Bar: Session time and XP rate update while the bar is visible.
+
+### Fixed
+
+- Character and Inspect: Long enchantment labels wrap within their column, leaving room for sockets and item details.
+- Inspect: The average item level is calculated from equipped gear and shown with one decimal place.
+- Action Bars: Hiding the Pet Bar with Always Hidden also hides its tooltips.
+- Micro Menu: The option to hide notification diamonds now works on Blizzard’s micro menu buttons.
+- Navigation: The 3D waypoint follows newly placed map pins and clears when the pin is removed.
+
 ## [13.24.1] - 2026-11-25
 
 ### Added

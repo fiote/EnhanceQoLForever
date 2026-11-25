@@ -24,6 +24,13 @@ local ANCHOR_TARGET_UI = "UIParent"
 local ANCHOR_TARGET_PLAYER_CASTBAR = "PLAYER_CASTBAR"
 local EQOL_PLAYER_CASTBAR = "EQOLUFPlayerHealthCast"
 local ANCHOR_POINTS = { "TOPLEFT", "TOP", "TOPRIGHT", "LEFT", "CENTER", "RIGHT", "BOTTOMLEFT", "BOTTOM", "BOTTOMRIGHT" }
+local EXTRA_TEXT_SLOTS = { "Extra1", "Extra2", "Extra3", "Extra4" }
+local TEXT_SLOTS = { "Left", "Center", "Right" }
+for _, slot in ipairs(EXTRA_TEXT_SLOTS) do
+	TEXT_SLOTS[#TEXT_SLOTS + 1] = slot
+end
+local TIMED_TEXT_MODES = { TIME_THIS_LEVEL = true, TIME_THIS_SESSION = true, XP_PER_HOUR = true, ETA_LEVEL = true, ETA_LEVEL_XPH = true }
+local sessionStartTime = GetTime and GetTime() or 0
 local VALID_ANCHOR_POINTS = {}
 for _, point in ipairs(ANCHOR_POINTS) do
 	VALID_ANCHOR_POINTS[point] = true
@@ -83,6 +90,14 @@ ExperienceBar.defaults = ExperienceBar.defaults
 		textExtra2Anchor = "CENTER",
 		textExtra2OffsetX = 0,
 		textExtra2OffsetY = -18,
+		textExtra3Mode = "NONE",
+		textExtra3Anchor = "TOPRIGHT",
+		textExtra3OffsetX = 0,
+		textExtra3OffsetY = 16,
+		textExtra4Mode = "NONE",
+		textExtra4Anchor = "BOTTOMRIGHT",
+		textExtra4OffsetX = 0,
+		textExtra4OffsetY = -16,
 		textEnabled = true,
 			textMode = "CURMAXPERCENT", -- legacy fallback for center
 			textLeftMode = "LEVEL",
@@ -447,7 +462,8 @@ local function normalizeLegacyTextMode(value)
 end
 
 local function normalizeTextContentMode(value)
-	if value == "QUEST_XP" or value == "QUEST_PERCENT" then return value end
+	if value == "QUEST_XP" or value == "QUEST_PERCENT" or value == "PERCENT_QUEST" or value == "QUEST_RESTED_PERCENT" then return value end
+	if TIMED_TEXT_MODES[value] then return value end
 	if value == "NONE" then return "NONE" end
 	if value == "LEVEL" then return "LEVEL" end
 	if value == "CURMAX" then return "CURMAX" end
@@ -458,10 +474,6 @@ local function normalizeTextContentMode(value)
 	if value == "RESTEDPERCENT" then return "RESTEDPERCENT" end
 	if value == "PERCENT_RESTED" then return "PERCENT_RESTED" end
 	if value == "CURMAX_RESTED" then return "CURMAX_RESTED" end
-	if value == "TIME_THIS_LEVEL" then return "TIME_THIS_LEVEL" end
-	if value == "XP_PER_HOUR" then return "XP_PER_HOUR" end
-	if value == "ETA_LEVEL" then return "ETA_LEVEL" end
-	if value == "ETA_LEVEL_XPH" then return "ETA_LEVEL_XPH" end
 	return "NONE"
 end
 
@@ -478,6 +490,7 @@ local function textModeOptions()
 		{ value = "PERCENT_RESTED", label = L["xpBarTextTypePercentRested"] or "Percent (+rested)" },
 		{ value = "CURMAX_RESTED", label = L["xpBarTextTypeCurMaxRested"] or "Current / Max (+rested)" },
 		{ value = "TIME_THIS_LEVEL", label = L["Time this level"] or "Time this level" },
+		{ value = "TIME_THIS_SESSION", label = L["xpBarTextTypeSessionTime"] },
 		{ value = "XP_PER_HOUR", label = L["xpBarTextTypeXPPerHour"] or "XP per hour" },
 		{ value = "ETA_LEVEL", label = L["Leveling in"] or "Leveling in" },
 		{ value = "ETA_LEVEL_XPH", label = L["xpBarTextTypeETAXPH"] or "Leveling in (+XP/h)" },
@@ -485,6 +498,8 @@ local function textModeOptions()
 	if ExperienceBar:SupportsQuestXP() then
 		options[#options + 1] = { value = "QUEST_XP", label = L["xpBarQuestXP"] }
 		options[#options + 1] = { value = "QUEST_PERCENT", label = L["xpBarQuestPercent"] }
+		options[#options + 1] = { value = "PERCENT_QUEST", label = L["xpBarTextTypePercentQuest"] }
+		options[#options + 1] = { value = "QUEST_RESTED_PERCENT", label = L["xpBarTextTypeQuestRested"] }
 	end
 	return options
 end
@@ -733,7 +748,8 @@ function ExperienceBar:BuildPreviewContext()
 	local sampleLevel = getPlayerLevel()
 	if sampleLevel <= 0 then sampleLevel = 80 end
 	local sample = buildXPContext(sampleLevel, 320192, 403725, 83533)
-	sample.questXP = self:SupportsQuestXP() and 42000 or 0
+	sample.questXP = self:SupportsQuestXP() and 42000 or nil
+	sample.timeThisSessionSeconds = 30 * 60
 	sample.timeThisLevelSeconds = (6 * 3600) + (23 * 60)
 	sample.gainedThisLevel = sample.current or 0
 	sample.xpPerHour = 50123
@@ -767,7 +783,7 @@ end
 
 function ExperienceBar:EnrichXPContext(ctx)
 	if not ctx then return end
-	ctx.questXP = self:GetQuestXP()
+	ctx.questXP = self:SupportsQuestXP() and self:GetQuestXP() or nil
 	local now = GetTime and GetTime() or 0
 	self._xpStats = self._xpStats or {}
 	local stats = self._xpStats
@@ -783,7 +799,13 @@ function ExperienceBar:EnrichXPContext(ctx)
 	if not stats.levelStartTime then stats.levelStartTime = now end
 	if stats.levelStartXP == nil then stats.levelStartXP = currentXP end
 	stats.lastXP = currentXP
+	self:RefreshTimeStatistics(ctx, now)
+end
 
+function ExperienceBar:RefreshTimeStatistics(ctx, now)
+	local stats = self._xpStats
+	local currentXP = ctx.current or 0
+	ctx.timeThisSessionSeconds = math.max(0, now - sessionStartTime)
 	local elapsed = math.max(0, now - (stats.levelStartTime or now))
 	local gained = math.max(0, currentXP - (stats.levelStartXP or currentXP))
 	local xpPerHour = 0
@@ -810,6 +832,15 @@ local function formatXPText(mode, ctx, abbreviateNumbers)
 		return string.format("%s / %s (%s)", formatNumber(ctx.current, abbreviateNumbers), formatNumber(ctx.max, abbreviateNumbers), formatNumber(ctx.remaining or 0, abbreviateNumbers))
 	end
 	if mode == "PERCENT" then return string.format("%.1f%%", ctx.currentPercent or 0) end
+	if mode == "PERCENT_QUEST" then
+		local currentPercent = ctx.currentPercent or 0
+		if not ctx.questXP or not ctx.max or ctx.max <= 0 then return string.format("%.1f%%", currentPercent) end
+		return string.format("%.1f%% (%.1f%%)", currentPercent, currentPercent + (ctx.questXP / ctx.max) * 100)
+	end
+	if mode == "QUEST_RESTED_PERCENT" then
+		if not ctx.questXP or not ctx.max or ctx.max <= 0 then return (L["xpBarTextRestedPercentFmt"]):format(ctx.restedPercent or 0) end
+		return (L["xpBarTextQuestRestedPercentFmt"]):format((ctx.questXP / ctx.max) * 100, ctx.restedPercent or 0)
+	end
 	if mode == "CURMAXPERCENT" then return string.format("%s / %s (%.1f%%)", formatNumber(ctx.current, abbreviateNumbers), formatNumber(ctx.max, abbreviateNumbers), ctx.currentPercent or 0) end
 	if mode == "RESTED" then return string.format("+%s", formatNumber(ctx.rested or 0, abbreviateNumbers)) end
 	if mode == "RESTEDPERCENT" then return string.format("%.1f%%", ctx.restedPercent or 0) end
@@ -818,6 +849,7 @@ local function formatXPText(mode, ctx, abbreviateNumbers)
 		return string.format("%s / %s (+%s)", formatNumber(ctx.current, abbreviateNumbers), formatNumber(ctx.max, abbreviateNumbers), formatNumber(ctx.rested or 0, abbreviateNumbers))
 	end
 	if mode == "TIME_THIS_LEVEL" then return string.format("%s: %s", L["Time this level"] or "Time this level", formatDurationShort(ctx.timeThisLevelSeconds or 0)) end
+	if mode == "TIME_THIS_SESSION" then return string.format("%s: %s", L["xpBarTextTypeSessionTime"], formatDurationShort(ctx.timeThisSessionSeconds or 0)) end
 	if mode == "XP_PER_HOUR" then
 		if (ctx.xpPerHour or 0) <= 0 then return nil end
 		return string.format("%s: %s", L["XP/hour"] or "XP/hour", formatRateNumber(ctx.xpPerHour, abbreviateNumbers))
@@ -941,21 +973,18 @@ function ExperienceBar:GetTextRightOffsetX() return normalizeTextOffset(getValue
 
 function ExperienceBar:GetTextRightOffsetY() return normalizeTextOffset(getValue(DB_TEXT_RIGHT_OFFSET_Y, defaults.textRightOffsetY), defaults.textRightOffsetY) end
 
-function ExperienceBar:GetTextExtra1Mode() return normalizeTextContentMode(getValue("xpBarTextExtra1Mode", defaults.textExtra1Mode)) end
+local EXTRA_TEXT_NORMALIZERS = {
+	Mode = normalizeTextContentMode,
+	Anchor = normalizeAnchorPoint,
+	OffsetX = normalizeTextOffset,
+	OffsetY = normalizeTextOffset,
+}
 
-function ExperienceBar:GetTextExtra1Anchor() return normalizeAnchorPoint(getValue("xpBarTextExtra1Anchor", defaults.textExtra1Anchor), defaults.textExtra1Anchor) end
-
-function ExperienceBar:GetTextExtra1OffsetX() return normalizeTextOffset(getValue("xpBarTextExtra1OffsetX", defaults.textExtra1OffsetX), defaults.textExtra1OffsetX, 500) end
-
-function ExperienceBar:GetTextExtra1OffsetY() return normalizeTextOffset(getValue("xpBarTextExtra1OffsetY", defaults.textExtra1OffsetY), defaults.textExtra1OffsetY, 500) end
-
-function ExperienceBar:GetTextExtra2Mode() return normalizeTextContentMode(getValue("xpBarTextExtra2Mode", defaults.textExtra2Mode)) end
-
-function ExperienceBar:GetTextExtra2Anchor() return normalizeAnchorPoint(getValue("xpBarTextExtra2Anchor", defaults.textExtra2Anchor), defaults.textExtra2Anchor) end
-
-function ExperienceBar:GetTextExtra2OffsetX() return normalizeTextOffset(getValue("xpBarTextExtra2OffsetX", defaults.textExtra2OffsetX), defaults.textExtra2OffsetX, 500) end
-
-function ExperienceBar:GetTextExtra2OffsetY() return normalizeTextOffset(getValue("xpBarTextExtra2OffsetY", defaults.textExtra2OffsetY), defaults.textExtra2OffsetY, 500) end
+function ExperienceBar:GetExtraTextSetting(slot, setting)
+	local field = "text" .. slot .. setting
+	local fallback = defaults[field]
+	return EXTRA_TEXT_NORMALIZERS[setting](getValue("xpBarText" .. slot .. setting, fallback), fallback, 500)
+end
 
 function ExperienceBar:GetHideInPetBattle() return shouldHideInPetBattleForXP() end
 
@@ -1195,9 +1224,11 @@ function ExperienceBar:UpdateXPOverlay(ctx, quest)
 	end
 	if not ctx or (ctx.max or 0) <= 0 then return end
 
-	local startFraction = clamp((ctx.current or 0) / (ctx.max or 1), 0, 1)
+	local startXP = ctx.current or 0
+	if not quest and self:GetQuestOverlayEnabled() then startXP = startXP + (ctx.questXP or 0) end
 	local amount = quest and (ctx.questXP or 0) or (ctx.restedVisual or 0)
-	local endFraction = clamp(((ctx.current or 0) + amount) / (ctx.max or 1), 0, 1)
+	local startFraction = clamp(startXP / ctx.max, 0, 1)
+	local endFraction = clamp((startXP + amount) / ctx.max, 0, 1)
 	if endFraction <= startFraction then return end
 
 	local fillDirection = self:GetFillDirection()
@@ -1241,17 +1272,14 @@ end
 
 function ExperienceBar:ApplyTextAnchors()
 	if not self.frame then return end
-	if self.frame.textExtra2 then
-		self.frame.textExtra2:ClearAllPoints()
-		local point = self:GetTextExtra2Anchor()
-		self.frame.textExtra2:SetPoint(point, self.frame, point, self:GetTextExtra2OffsetX(), self:GetTextExtra2OffsetY())
-		self.frame.textExtra2:SetJustifyH(point:find("LEFT", 1, true) and "LEFT" or (point:find("RIGHT", 1, true) and "RIGHT" or "CENTER"))
-	end
-	if self.frame.textExtra1 then
-		self.frame.textExtra1:ClearAllPoints()
-		local point = self:GetTextExtra1Anchor()
-		self.frame.textExtra1:SetPoint(point, self.frame, point, self:GetTextExtra1OffsetX(), self:GetTextExtra1OffsetY())
-		self.frame.textExtra1:SetJustifyH(point:find("LEFT", 1, true) and "LEFT" or (point:find("RIGHT", 1, true) and "RIGHT" or "CENTER"))
+	for _, slot in ipairs(EXTRA_TEXT_SLOTS) do
+		local text = self.frame["text" .. slot]
+		if text then
+			local point = self:GetExtraTextSetting(slot, "Anchor")
+			text:ClearAllPoints()
+			text:SetPoint(point, self.frame, point, self:GetExtraTextSetting(slot, "OffsetX"), self:GetExtraTextSetting(slot, "OffsetY"))
+			text:SetJustifyH(point:find("LEFT", 1, true) and "LEFT" or (point:find("RIGHT", 1, true) and "RIGHT" or "CENTER"))
+		end
 	end
 	if self.frame.textLeft then
 		self.frame.textLeft:ClearAllPoints()
@@ -1321,8 +1349,8 @@ function ExperienceBar:ApplyAppearance()
 	local outline = resolveTextOutlineFlags(outlineChoice, defaults.textOutline or "OUTLINE")
 	local size = self:GetTextSize()
 	local tr, tg, tb, ta = self:GetTextColor()
-	for _, key in ipairs({ "textLeft", "textCenter", "textRight", "textExtra1", "textExtra2" }) do
-		local fs = self.frame[key]
+	for _, slot in ipairs(TEXT_SLOTS) do
+		local fs = self.frame["text" .. slot]
 		if fs then
 			setFontWithFallback(fs, font, size, outline)
 			if addon.functions and addon.functions.ApplyFontStyleShadow then addon.functions.ApplyFontStyleShadow(fs, outlineChoice, defaults.textOutline or "OUTLINE") end
@@ -1414,13 +1442,11 @@ function ExperienceBar:EnsureFrame()
 	textCenter:Hide()
 	bar.textCenter = textCenter
 
-	bar.textExtra1 = bar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-	bar.textExtra1:SetJustifyH("CENTER")
-	bar.textExtra1:Hide()
-
-	bar.textExtra2 = bar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-	bar.textExtra2:SetJustifyH("CENTER")
-	bar.textExtra2:Hide()
+	for _, slot in ipairs(EXTRA_TEXT_SLOTS) do
+		local text = bar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+		text:Hide()
+		bar["text" .. slot] = text
+	end
 
 	local textRight = bar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
 	textRight:SetPoint("RIGHT", bar, "RIGHT", -4, 0)
@@ -1434,6 +1460,7 @@ function ExperienceBar:EnsureFrame()
 	editLabel:Hide()
 	bar.editLabel = editLabel
 
+	bar:HookScript("OnHide", function() ExperienceBar:StopTextTimer() end)
 	bar:HookScript("OnShow", function()
 		if ExperienceBar and ExperienceBar.previewing then return end
 		if ExperienceBar and ExperienceBar.UpdateSoon then ExperienceBar:UpdateSoon() end
@@ -1511,47 +1538,61 @@ function ExperienceBar:ApplyBlizzardTrackingVisibility()
 	if rb and rb.SetBlizzardTrackingKilled then rb.SetBlizzardTrackingKilled("xpBar", hide) end
 end
 
-function ExperienceBar:UpdateTextFromContext(ctx)
+function ExperienceBar:UpdateTextFromContext(ctx, timedOnly)
 	if not self.frame then return end
 
-	if self.frame.editLabel then
-		if self.previewing then
-			self.frame.editLabel:SetText(L["ExperienceBar"] or "Experience Bar")
-			self.frame.editLabel:Show()
-		else
-			self.frame.editLabel:Hide()
-		end
+	if self.frame.editLabel and not timedOnly then
+		self.frame.editLabel:SetShown(self.previewing == true)
 	end
 
-	if not self:GetTextEnabled() then
-		if self.frame.textLeft then self.frame.textLeft:Hide() end
-		if self.frame.textCenter then self.frame.textCenter:Hide() end
-		if self.frame.textExtra1 then self.frame.textExtra1:Hide() end
-		if self.frame.textExtra2 then self.frame.textExtra2:Hide() end
-		if self.frame.textRight then self.frame.textRight:Hide() end
+	local enabled = self:GetTextEnabled()
+	local abbreviateNumbers = self:GetAbbreviateNumbers()
+	local hasTimedText = false
+	for _, slot in ipairs(TEXT_SLOTS) do
+		local text = self.frame["text" .. slot]
+		if text then
+			local mode = "NONE"
+			if enabled then
+				local getMode = self["GetText" .. slot .. "Mode"]
+				mode = getMode and getMode(self) or self:GetExtraTextSetting(slot, "Mode")
+			end
+			local isTimed = TIMED_TEXT_MODES[mode]
+			hasTimedText = hasTimedText or isTimed
+			if isTimed or not timedOnly then
+				local value = formatXPText(mode, ctx, abbreviateNumbers)
+				if value then
+					text:SetText(value)
+					text:Show()
+				else
+					text:Hide()
+				end
+			end
+		end
+	end
+	return hasTimedText
+end
+
+function ExperienceBar:StopTextTimer()
+	if not self._textTimer then return end
+	self._textTimer:Cancel()
+	self._textTimer = nil
+end
+
+function ExperienceBar:RefreshTextTimer(hasTimedText)
+	if not hasTimedText or not self.frame:IsVisible() then
+		self:StopTextTimer()
 		return
 	end
-
-	local abbreviateNumbers = self:GetAbbreviateNumbers()
-	local leftText = formatXPText(self:GetTextLeftMode(), ctx, abbreviateNumbers)
-	local centerText = formatXPText(self:GetTextCenterMode(), ctx, abbreviateNumbers)
-	local rightText = formatXPText(self:GetTextRightMode(), ctx, abbreviateNumbers)
-
-	local function setText(fs, text)
-		if not fs then return end
-		if text and text ~= "" then
-			fs:SetText(text)
-			fs:Show()
-		else
-			fs:Hide()
+	if self._textTimer or not (C_Timer and C_Timer.NewTicker) then return end
+	self._textTimer = C_Timer.NewTicker(1, function()
+		local ctx = self._lastXPContext
+		if not ctx or not self._xpStats or self.previewing or not self.frame:IsVisible() then
+			self:StopTextTimer()
+			return
 		end
-	end
-
-	setText(self.frame.textLeft, leftText)
-	setText(self.frame.textCenter, centerText)
-	setText(self.frame.textExtra1, formatXPText(self:GetTextExtra1Mode(), ctx, abbreviateNumbers))
-	setText(self.frame.textExtra2, formatXPText(self:GetTextExtra2Mode(), ctx, abbreviateNumbers))
-	setText(self.frame.textRight, rightText)
+		self:RefreshTimeStatistics(ctx, GetTime())
+		if not self:UpdateTextFromContext(ctx, true) then self:StopTextTimer() end
+	end)
 end
 
 function ExperienceBar:UpdateXP()
@@ -1615,10 +1656,11 @@ function ExperienceBar:UpdateXP()
 	self:ApplyCurrentFillColor(self._hasRested)
 	self:UpdateRestedOverlay(ctx)
 	self:UpdateQuestOverlay(ctx)
-	self:UpdateTextFromContext(ctx)
+	local hasTimedText = self:UpdateTextFromContext(ctx)
 	local rb = addon.Aura and addon.Aura.ResourceBars
 	if not rb or not rb.ShouldDeferShowToVisibilityDriver or not rb.ShouldDeferShowToVisibilityDriver(frame, self:GetVisibilityRuntimeConfig()) then frame:Show() end
 	self:ApplyVisibilityPreference(true)
+	self:RefreshTextTimer(hasTimedText)
 	self:ApplyBlizzardTrackingVisibility()
 end
 
@@ -1643,6 +1685,7 @@ function ExperienceBar:ShowEditModeHint(show)
 	if show then
 		if self.frame.editBg then self.frame.editBg:Show() end
 		self.previewing = true
+		self:StopTextTimer()
 		self:UpdatePreviewSample()
 	else
 		if self.frame.editBg then self.frame.editBg:Hide() end
@@ -1754,14 +1797,11 @@ function ExperienceBar:BuildLayoutRecordFromProfile()
 	record.textCenterOffsetY = self:GetTextCenterOffsetY()
 	record.textRightOffsetX = self:GetTextRightOffsetX()
 	record.textRightOffsetY = self:GetTextRightOffsetY()
-	record.textExtra1Anchor = self:GetTextExtra1Anchor()
-	record.textExtra1Mode = self:GetTextExtra1Mode()
-	record.textExtra1OffsetX = self:GetTextExtra1OffsetX()
-	record.textExtra1OffsetY = self:GetTextExtra1OffsetY()
-	record.textExtra2Anchor = self:GetTextExtra2Anchor()
-	record.textExtra2Mode = self:GetTextExtra2Mode()
-	record.textExtra2OffsetX = self:GetTextExtra2OffsetX()
-	record.textExtra2OffsetY = self:GetTextExtra2OffsetY()
+	for _, slot in ipairs(EXTRA_TEXT_SLOTS) do
+		for setting in pairs(EXTRA_TEXT_NORMALIZERS) do
+			record["text" .. slot .. setting] = self:GetExtraTextSetting(slot, setting)
+		end
+	end
 	record.textMode = normalizeLegacyTextMode(record.textCenterMode)
 	record.textSize = self:GetTextSize()
 	record.textFont = self:GetTextFont()
@@ -1895,14 +1935,12 @@ function ExperienceBar:ApplyLayoutData(data)
 	addon.db.xpBarTextCenterOffsetY = textCenterOffsetY
 	addon.db.xpBarTextRightOffsetX = textRightOffsetX
 	addon.db.xpBarTextRightOffsetY = textRightOffsetY
-	addon.db.xpBarTextExtra1Anchor = normalizeAnchorPoint(data.textExtra1Anchor, defaults.textExtra1Anchor)
-	addon.db.xpBarTextExtra1Mode = normalizeTextContentMode(data.textExtra1Mode or "NONE")
-	addon.db.xpBarTextExtra1OffsetX = normalizeTextOffset(data.textExtra1OffsetX, defaults.textExtra1OffsetX, 500)
-	addon.db.xpBarTextExtra1OffsetY = normalizeTextOffset(data.textExtra1OffsetY, defaults.textExtra1OffsetY, 500)
-	addon.db.xpBarTextExtra2Anchor = normalizeAnchorPoint(data.textExtra2Anchor, defaults.textExtra2Anchor)
-	addon.db.xpBarTextExtra2Mode = normalizeTextContentMode(data.textExtra2Mode or "NONE")
-	addon.db.xpBarTextExtra2OffsetX = normalizeTextOffset(data.textExtra2OffsetX, defaults.textExtra2OffsetX, 500)
-	addon.db.xpBarTextExtra2OffsetY = normalizeTextOffset(data.textExtra2OffsetY, defaults.textExtra2OffsetY, 500)
+	for _, slot in ipairs(EXTRA_TEXT_SLOTS) do
+		for setting, normalize in pairs(EXTRA_TEXT_NORMALIZERS) do
+			local field = "text" .. slot .. setting
+			addon.db["xpBarText" .. slot .. setting] = normalize(data[field] or defaults[field], defaults[field], 500)
+		end
+	end
 	addon.db.xpBarTextMode = normalizeLegacyTextMode(textCenterMode)
 	addon.db.xpBarTextSize = textSize
 	addon.db.xpBarTextFont = textFont
@@ -2100,32 +2138,11 @@ local function applySetting(field, value)
 		local offset = normalizeTextOffset(value, defaults.textRightOffsetY)
 		addon.db.xpBarTextRightOffsetY = offset
 		value = offset
-	elseif field == "textExtra1Anchor" then
-		value = normalizeAnchorPoint(value, defaults.textExtra1Anchor)
-		addon.db.xpBarTextExtra1Anchor = value
-	elseif field == "textExtra1Mode" then
-		value = normalizeTextContentMode(value)
-		addon.db.xpBarTextExtra1Mode = value
-		refreshSettingsUI()
-	elseif field == "textExtra1OffsetX" then
-		value = normalizeTextOffset(value, defaults.textExtra1OffsetX, 500)
-		addon.db.xpBarTextExtra1OffsetX = value
-	elseif field == "textExtra1OffsetY" then
-		value = normalizeTextOffset(value, defaults.textExtra1OffsetY, 500)
-		addon.db.xpBarTextExtra1OffsetY = value
-	elseif field == "textExtra2Anchor" then
-		value = normalizeAnchorPoint(value, defaults.textExtra2Anchor)
-		addon.db.xpBarTextExtra2Anchor = value
-	elseif field == "textExtra2Mode" then
-		value = normalizeTextContentMode(value)
-		addon.db.xpBarTextExtra2Mode = value
-		refreshSettingsUI()
-	elseif field == "textExtra2OffsetX" then
-		value = normalizeTextOffset(value, defaults.textExtra2OffsetX, 500)
-		addon.db.xpBarTextExtra2OffsetX = value
-	elseif field == "textExtra2OffsetY" then
-		value = normalizeTextOffset(value, defaults.textExtra2OffsetY, 500)
-		addon.db.xpBarTextExtra2OffsetY = value
+	elseif field:match("^textExtra%d") then
+		local slot, setting = field:match("^text(Extra%d)(%a+)$")
+		value = EXTRA_TEXT_NORMALIZERS[setting](value, defaults[field], 500)
+		addon.db["xpBarText" .. slot .. setting] = value
+		if setting == "Mode" then refreshSettingsUI() end
 	elseif field == "textSize" then
 		local size = clamp(value, TEXT_SIZE_MIN, TEXT_SIZE_MAX)
 		addon.db.xpBarTextSize = size
@@ -2876,9 +2893,9 @@ function ExperienceBar:RegisterEditMode(frame)
 				isEnabled = function() return ExperienceBar:GetTextEnabled() end,
 			},
 		}
-		for _, slot in ipairs({ "Extra1", "Extra2" }) do
+		for _, slot in ipairs(EXTRA_TEXT_SLOTS) do
 			local modeField = "text" .. slot .. "Mode"
-			local getMode = function() return ExperienceBar["GetText" .. slot .. "Mode"](ExperienceBar) end
+			local getMode = function() return ExperienceBar:GetExtraTextSetting(slot, "Mode") end
 			settings[#settings + 1] = {
 				name = L["xpBarText" .. slot], kind = SettingType.Dropdown,
 				field = modeField, parentId = "xpBarText", height = 200,
@@ -2887,7 +2904,7 @@ function ExperienceBar:RegisterEditMode(frame)
 				isEnabled = function() return ExperienceBar:GetTextEnabled() end,
 			}
 			local anchorField = "text" .. slot .. "Anchor"
-			local getAnchor = function() return ExperienceBar["GetText" .. slot .. "Anchor"](ExperienceBar) end
+			local getAnchor = function() return ExperienceBar:GetExtraTextSetting(slot, "Anchor") end
 			settings[#settings + 1] = {
 				name = L["Anchor point"], kind = SettingType.Dropdown,
 				field = anchorField, parentId = "xpBarText", height = 200,
@@ -2906,7 +2923,7 @@ function ExperienceBar:RegisterEditMode(frame)
 					name = L["Offset " .. axis], kind = SettingType.Slider,
 					field = field, parentId = "xpBarText", default = defaults[field],
 					minValue = -500, maxValue = 500, valueStep = 1, allowInput = true,
-					get = function() return ExperienceBar["GetText" .. slot .. "Offset" .. axis](ExperienceBar) end,
+					get = function() return ExperienceBar:GetExtraTextSetting(slot, "Offset" .. axis) end,
 					set = function(_, value) applySetting(field, value) end,
 					isShown = function() return getMode() ~= "NONE" end,
 					isEnabled = function() return ExperienceBar:GetTextEnabled() end,
@@ -2952,7 +2969,7 @@ function ExperienceBar:RegisterEditMode(frame)
 				ExperienceBar:ApplyVisibilityPreference(ExperienceBar.frame and ExperienceBar.frame._rbDesiredVisible ~= false)
 			end
 		end
-		for _, slot in ipairs({ "Left", "Center", "Right", "Extra1", "Extra2" }) do
+		for _, slot in ipairs(TEXT_SLOTS) do
 			local target = navigationByField["text" .. slot .. "Mode"]
 			local anchor = navigationByField["text" .. slot .. "Anchor"]
 			if anchor and target then anchor.navigationHint = function() return target.name, nil, target.parentId end end
@@ -3022,76 +3039,7 @@ function ExperienceBar:RegisterEditMode(frame)
 		},
 		title = L["ExperienceBar"] or "Experience Bar",
 		managerCategory = "resourceBars",
-		layoutDefaults = {
-			point = self:GetAnchorPoint(),
-			relativePoint = self:GetAnchorRelativePoint(),
-			x = self:GetAnchorOffsetX(),
-			y = self:GetAnchorOffsetY(),
-			width = self:GetWidth(),
-			height = self:GetHeight(),
-			texture = self:GetTextureKey(),
-			bgEnabled = self:GetBackgroundEnabled(),
-			bgTexture = self:GetBackgroundTextureKey(),
-			bgColor = (function()
-				local r, g, b, a = self:GetBackgroundColor()
-				return { r = r, g = g, b = b, a = a }
-			end)(),
-			borderEnabled = self:GetBorderEnabled(),
-			borderTexture = self:GetBorderTextureKey(),
-			borderColor = (function()
-				local r, g, b, a = self:GetBorderColor()
-				return { r = r, g = g, b = b, a = a }
-			end)(),
-			borderSize = self:GetBorderSize(),
-			borderOffset = self:GetBorderOffset(),
-			fillDirection = self:GetFillDirection(),
-			anchorRelativeFrame = self:GetAnchorRelativeFrame(),
-			anchorMatchWidth = self:GetAnchorMatchWidth(),
-			anchorMatchWidthOffset = self:GetAnchorMatchWidthOffset(),
-			textEnabled = self:GetTextEnabled(),
-			textLeftMode = self:GetTextLeftMode(),
-			textCenterMode = self:GetTextCenterMode(),
-			textRightMode = self:GetTextRightMode(),
-			textLeftOffsetX = self:GetTextLeftOffsetX(),
-			textLeftOffsetY = self:GetTextLeftOffsetY(),
-			textCenterOffsetX = self:GetTextCenterOffsetX(),
-			textCenterOffsetY = self:GetTextCenterOffsetY(),
-			textRightOffsetX = self:GetTextRightOffsetX(),
-			textRightOffsetY = self:GetTextRightOffsetY(),
-			textExtra1Anchor = self:GetTextExtra1Anchor(),
-			textExtra1Mode = self:GetTextExtra1Mode(),
-			textExtra1OffsetX = self:GetTextExtra1OffsetX(),
-			textExtra1OffsetY = self:GetTextExtra1OffsetY(),
-			textExtra2Anchor = self:GetTextExtra2Anchor(),
-			textExtra2Mode = self:GetTextExtra2Mode(),
-			textExtra2OffsetX = self:GetTextExtra2OffsetX(),
-			textExtra2OffsetY = self:GetTextExtra2OffsetY(),
-			textMode = normalizeLegacyTextMode(self:GetTextCenterMode()),
-			textSize = self:GetTextSize(),
-			textFont = self:GetTextFont(),
-			textOutline = self:GetTextOutline(),
-			abbreviateNumbers = self:GetAbbreviateNumbers(),
-			textColor = (function()
-				local r, g, b, a = self:GetTextColor()
-				return { r = r, g = g, b = b, a = a }
-			end)(),
-			hideInPetBattle = self:GetHideInPetBattle(),
-			hideBlizzardTracking = self:GetHideBlizzardTracking(),
-			color = (function()
-				local r, g, b, a = self:GetColor()
-				return { r = r, g = g, b = b, a = a }
-			end)(),
-			restedColor = (function()
-				local r, g, b, a = self:GetRestedColor()
-				return { r = r, g = g, b = b, a = a }
-			end)(),
-			questOverlayEnabled = self:GetQuestOverlayEnabled(),
-			questColor = (function()
-				local r, g, b, a = self:GetQuestColor()
-				return { r = r, g = g, b = b, a = a }
-			end)(),
-			restedOverlayEnabled = self:GetRestedOverlayEnabled(),
-		},
+		layoutDefaults = self:BuildLayoutRecordFromProfile(),
 		normalizePosition = true,
 		onApply = function(_, _, data)
 			if not self._eqolEditModeHydrated then

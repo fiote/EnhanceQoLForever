@@ -2,7 +2,7 @@
 ## X-EQOL-Flavor: forever
 ## Title: Enhance QoL Items
 ## Author: R41Z0R
-## Version: 13.24.1
+## Version: 13.24.2
 ## Dependencies: EnhanceQoL
 ## IconTexture: Interface\AddOns\EnhanceQoL\Icons\Icon.tga
 ## X-Compatible-With: forever

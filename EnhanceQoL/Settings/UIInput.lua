@@ -192,10 +192,10 @@ local mountUnwrapDebounce = false
 local function ApplyNotificationOverlaySetting(first)
 	local hideOverlay = addon.db and addon.db.hideMicroMenuNotificationOverlay
 	if first and not hideOverlay then return end
-	if not MICRO_BUTTONS then return end
+	if not MicroMenu then return end
 
-	for _, name in ipairs(MICRO_BUTTONS) do
-		local overlay = _G[name] and _G[name].NotificationOverlay
+	for _, button in ipairs({ MicroMenu:GetChildren() }) do
+		local overlay = button.NotificationOverlay
 		if overlay then overlay:SetAlpha(hideOverlay and 0 or 1) end
 	end
 end

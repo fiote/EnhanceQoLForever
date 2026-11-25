@@ -4013,6 +4013,7 @@ function Reminder:GetClassicSelfStatus(provider)
 						local entry = self:MakeSpellInteractionEntry(category.spellIds, spellId, safeGetSpellName(spellId), missing, count)
 						local selfCache = self:GetGroupBuffStateCache(self:GetClassicGroupAuraSpellIds(category), false)
 						entry.selfBuffMissing = selfCache and self:GetGroupBuffUnitMissingStatus(selfCache, "player", spellId, false) == 1 or false
+						entry.groupCast = category.partyOnly
 						entry.warningStates = warningStates
 						if #candidates > 0 then
 							entry.targetSelectionKey = "CLASSIC_GROUP_BUFF_" .. category.spellIds[1]

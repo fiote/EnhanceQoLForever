@@ -12,26 +12,46 @@ local atlases = {
 }
 local states = Enum.NavigationState
 local isInsideQuestBlob = C_Minimap and C_Minimap.IsInsideQuestBlob
+local hasUserWaypoint = C_Map and C_Map.HasUserWaypoint
+local superTrack = C_SuperTrack
+local canAutoTrackWaypoint = hasUserWaypoint and superTrack.IsSuperTrackingUserWaypoint and superTrack.SetSuperTrackedUserWaypoint
 
 function addon.functions.CreateNavigationWaypointFallback()
 	local getPrivateDB = addon.functions.GetPrivateDB
 	local function isEnabled() return getPrivateDB().navigationWaypointFallback == true end
+	local function getScale() return math.max(0.5, math.min(1.5, tonumber(getPrivateDB().navigationWaypointScale) or 1)) end
 	local marker = CreateFrame("Frame", nil, UIParent)
 	marker:SetSize(32, 32)
 	marker:SetFrameStrata("TOOLTIP")
 	marker:EnableMouse(false)
 	marker:Hide()
 
-	local icon = marker:CreateTexture(nil, "ARTWORK")
+	local visuals = CreateFrame("Frame", nil, marker)
+	visuals:SetSize(32, 32)
+	visuals:SetPoint("CENTER")
+	visuals:SetScale(getScale())
+	local icon = visuals:CreateTexture(nil, "ARTWORK")
 	icon:SetPoint("CENTER")
-	local arrow = marker:CreateTexture(nil, "OVERLAY")
+	local arrow = visuals:CreateTexture(nil, "OVERLAY")
 	arrow:SetAtlas("Navigation-Tracked-Arrow", true)
-	local distanceText = marker:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	local distanceText = visuals:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 	distanceText:SetPoint("TOP", icon, "BOTTOM", 0, -8)
 
 	local anchor = nav.GetFrame()
 	local attachedTo, lastX, lastY, lastDistance, atlas, trackingKind
 	local transparentUntil = 0
+	local pendingWaypointTrack
+
+	local function cancelWaypointTrack()
+		if not pendingWaypointTrack then return end
+		pendingWaypointTrack:Cancel()
+		pendingWaypointTrack = nil
+	end
+
+	local function trackPlacedWaypoint()
+		pendingWaypointTrack = nil
+		if isEnabled() and hasUserWaypoint() and not superTrack.IsSuperTrackingUserWaypoint() then superTrack.SetSuperTrackedUserWaypoint(true) end
+	end
 
 	local function place(self)
 		-- The event can supply a usable anchor independently of the default marker's visibility.
@@ -94,9 +114,9 @@ function addon.functions.CreateNavigationWaypointFallback()
 	end
 
 	local function refresh(changedQuestID, isInside)
-		local kind = C_SuperTrack.GetHighestPrioritySuperTrackingType()
+		local kind = superTrack.GetHighestPrioritySuperTrackingType()
 		local nextAtlas = atlases[kind]
-		if not (isEnabled() and anchor and nextAtlas) then
+		if not (isEnabled() and anchor and nextAtlas) or (kind == tracking.UserWaypoint and hasUserWaypoint and not hasUserWaypoint()) then
 			marker:Hide()
 			return
 		end
@@ -123,6 +143,7 @@ function addon.functions.CreateNavigationWaypointFallback()
 	marker:RegisterEvent("NAVIGATION_FRAME_CREATED")
 	marker:RegisterEvent("NAVIGATION_FRAME_DESTROYED")
 	marker:RegisterEvent("SUPER_TRACKING_CHANGED")
+	if canAutoTrackWaypoint then marker:RegisterEvent("USER_WAYPOINT_UPDATED") end
 	if isInsideQuestBlob then
 		marker:RegisterEvent("PLAYER_INSIDE_QUEST_BLOB_STATE_CHANGED")
 		marker:RegisterEvent("QUEST_LOG_UPDATE")
@@ -142,6 +163,14 @@ function addon.functions.CreateNavigationWaypointFallback()
 		elseif event == "SUPER_TRACKING_CHANGED" then
 			anchor = nav.GetFrame() or anchor
 			transparentUntil = GetTime() + 0.2
+		elseif event == "USER_WAYPOINT_UPDATED" then
+			if hasUserWaypoint() then
+				-- The map click can finish changing super tracking after this event.
+				if isEnabled() and not pendingWaypointTrack then pendingWaypointTrack = C_Timer.NewTimer(0, trackPlacedWaypoint) end
+			else
+				cancelWaypointTrack()
+				if trackingKind == tracking.UserWaypoint then anchor = nav.GetFrame() end
+			end
 		end
 		refresh()
 	end)
@@ -149,8 +178,14 @@ function addon.functions.CreateNavigationWaypointFallback()
 
 	return {
 		get = isEnabled,
+		getScale = getScale,
+		setScale = function(value)
+			getPrivateDB().navigationWaypointScale = value
+			visuals:SetScale(getScale())
+		end,
 		set = function(enabled)
 			getPrivateDB().navigationWaypointFallback = enabled == true
+			if not enabled then cancelWaypointTrack() end
 			refresh()
 			return true
 		end,

@@ -756,7 +756,9 @@ end
 local doneHook = false
 local inspectDone = {}
 local inspectUnit = nil
+local inspectGUID
 local inspectItemLinks = {}
+local inspectItemLevels = {}
 local inspectSlotOrder = { 1, 2, 3, 15, 5, 9, 10, 6, 7, 8, 11, 12, 13, 14, 16, 17, 18 }
 local inspectSlotFrameNames = {
 	[1] = "InspectHeadSlot",
@@ -875,36 +877,6 @@ local function applyCharIlvlPosition(element, slot)
 	hideIlvlBackground(element)
 end
 
-
-local function applyCharEnchantPosition(element, slot, itemLevelShown, inspectFrame)
-	if not element or not element.enchant then return end
-	local pos = addon.db["charEnchantPosition"] or "SLOT"
-	local side = addon.variables.itemSlotSide and addon.variables.itemSlotSide[slot] or 0
-	element.enchant:ClearAllPoints()
-
-	if pos == "ITEMLEVEL" and itemLevelShown and element.ilvl then
-		if side == 1 then
-			element.enchant:SetPoint("TOPRIGHT", element.ilvl, "BOTTOMRIGHT", 0, -1)
-		else
-			element.enchant:SetPoint("TOPLEFT", element.ilvl, "BOTTOMLEFT", 0, -1)
-		end
-		return
-	end
-
-	if inspectFrame then
-		if side == 0 then
-			element.enchant:SetPoint("BOTTOMLEFT", element, "BOTTOMRIGHT", 2, 1)
-		elseif side == 2 then
-			element.enchant:SetPoint("TOPLEFT", element, "TOPRIGHT", 2, -1)
-		else
-			element.enchant:SetPoint("BOTTOMRIGHT", element, "BOTTOMLEFT", -2, 1)
-		end
-	elseif side == 1 then
-		element.enchant:SetPoint("BOTTOMRIGHT", element, "BOTTOMLEFT", -2, -2)
-	else
-		element.enchant:SetPoint("BOTTOMLEFT", element, "BOTTOMRIGHT", 2, -2)
-	end
-end
 
 local function positionGemFrame(element, slot, gemIndex, outsideWithIlvl)
 	if not element or not element.gems or not element.gems[gemIndex] then return end
@@ -1053,8 +1025,6 @@ local function getEnchantDisplayMode()
 	return normalizeEnchantDisplayMode(mode, showMissingOverlay)
 end
 
-addon.ItemEnchantDisplay = addon.ItemEnchantDisplay or {}
-
 function addon.ItemEnchantDisplay.GetQualityInfo(link)
 	if not link or not addon.ItemEnchantData then return nil, false end
 	local enchantID = tonumber(link:match("item:%d+:(%d+)") or 0)
@@ -1074,49 +1044,6 @@ function addon.ItemEnchantDisplay.GetWarning(link)
 	local data, lowQuality = addon.ItemEnchantDisplay.GetQualityInfo(link)
 	if data and lowQuality then return "LOW" end
 	return nil
-end
-
-function addon.ItemEnchantDisplay.SetWarningTooltip(element, warning)
-	if not element or not element.enchant then return end
-	local frame = element.enchantWarningTooltip
-	if not warning then
-		if frame then
-			frame.warningText = nil
-			frame:Hide()
-		end
-		return
-	end
-	if not frame then
-		frame = CreateFrame("Frame", nil, element)
-		frame:SetFrameLevel(element:GetFrameLevel() + 20)
-		frame:EnableMouse(true)
-		frame:SetScript("OnEnter", function(self)
-			if not self.warningText then return end
-			GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-			GameTooltip:SetText(self.warningText, 1, 0.82, 0, 1, true)
-			GameTooltip:Show()
-		end)
-		frame:SetScript("OnLeave", function() GameTooltip:Hide() end)
-		element.enchantWarningTooltip = frame
-	end
-	frame:ClearAllPoints()
-	frame:SetPoint("CENTER", element.enchant, "CENTER")
-	frame:SetSize(math.max(element.enchant:GetStringWidth() + 4, 12), math.max(element.enchant:GetStringHeight() + 4, 12))
-	frame.warningText = L["gearEnchantWarningLow"]
-	frame:Show()
-end
-
-function addon.ItemEnchantDisplay.Clear(element)
-	if not element then return end
-	if element.enchant then element.enchant:SetText("") end
-	addon.ItemEnchantDisplay.SetWarningTooltip(element, nil)
-end
-
-function addon.ItemEnchantDisplay.Apply(element, displayText, warning)
-	addon.ItemEnchantDisplay.Clear(element)
-	if not element or not element.enchant or not displayText then return end
-	element.enchant:SetFormattedText(displayText)
-	addon.ItemEnchantDisplay.SetWarningTooltip(element, warning)
 end
 
 local function shouldShowMissingEnchant(slot, link, itemLevel)
@@ -1377,6 +1304,51 @@ local function getTooltipInfo(link)
 	return upgradeKey, isPVP
 end
 
+local function refreshInspectAverage(unit)
+	local frame = InspectPaperDollFrame
+	if not frame or not frame.ilvl or not InspectOpt("ilvl") then return end
+
+	local total, equipped = 0, 0
+	for _, slot in ipairs(inspectSlotOrder) do
+		local link = GetInventoryItemLink(unit, slot)
+		if issecretvalue(link) or (link and (inspectItemLinks[slot] ~= link or not inspectItemLevels[slot])) then
+			frame.ilvl:SetText("")
+			return
+		end
+		if link then
+			total = total + inspectItemLevels[slot]
+			equipped = equipped + 1
+		else
+			local texture = GetInventoryItemTexture(unit, slot)
+			if issecretvalue(texture) or texture then
+				frame.ilvl:SetText("")
+				return
+			end
+		end
+	end
+
+	local mainHand = inspectItemLevels[16]
+	if mainHand and not inspectItemLevels[17] then
+		local _, _, _, equipLoc, _, _, subclass = C_Item.GetItemInfoInstant(inspectItemLinks[16])
+		if issecretvalue(equipLoc) or not equipLoc then
+			frame.ilvl:SetText("")
+			return
+		end
+		local twoHanded = equipLoc == "INVTYPE_2HWEAPON"
+		-- Wands use the ranged weapon equip location but only occupy one slot.
+		local rangedWeapon = equipLoc == "INVTYPE_RANGED" or equipLoc == "INVTYPE_RANGEDRIGHT"
+		if rangedWeapon and not issecretvalue(subclass) and type(subclass) == "number" and subclass ~= 19 then twoHanded = true end
+		if twoHanded then total = total + mainHand end
+	end
+
+	local divisor = inspectItemLevels[18] and 17 or 16
+	addon.functions.ApplyItemLevelTextStyle(frame.ilvl)
+	addon.functions.ApplyItemLevelTextColor(frame.ilvl, nil)
+	frame.ilvl:SetText(equipped > 0 and string.format("%.1f", total / divisor) or "")
+	frame.ilvlBackground:SetSize(frame.ilvl:GetStringWidth() + 6, frame.ilvl:GetStringHeight() + 4)
+	hideIlvlBackground(frame)
+end
+
 local function onInspect(arg1)
 	if nil == InspectFrame then return end
 	local unit = InspectFrame.unit
@@ -1391,13 +1363,16 @@ local function onInspect(arg1)
 		InspectFrame:HookScript("OnHide", function(self)
 			inspectDone = {}
 			inspectItemLinks = {}
+			inspectItemLevels = {}
 			removeInspectElements()
 		end)
 	end
-	if inspectUnit ~= InspectFrame.unit then
-		inspectUnit = InspectFrame.unit
+	local currentGUID = not issecretvalue(unitGUID) and unitGUID or nil
+	if inspectUnit ~= unit or inspectGUID ~= currentGUID then
+		inspectUnit, inspectGUID = unit, currentGUID
 		inspectDone = {}
 		inspectItemLinks = {}
+		inspectItemLevels = {}
 	end
 	if not InspectOpt("ilvl") and pdElement.ilvl then pdElement.ilvl:SetText("") end
 	if not pdElement.ilvl and InspectOpt("ilvl") then
@@ -1408,32 +1383,24 @@ local function onInspect(arg1)
 
 		pdElement.ilvl = pdElement:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
 		pdElement.ilvl:SetPoint("TOPRIGHT", pdElement.ilvlBackground, "TOPRIGHT", -1, -1)
-		addon.functions.ApplyItemLevelTextStyle(pdElement.ilvl)
-
-		if C_PaperDollInfo and C_PaperDollInfo.GetInspectItemLevel then
-			local ilvl = C_PaperDollInfo.GetInspectItemLevel(unit)
-			if ilvl then pdElement.ilvl:SetFormattedText(string.format("%.1f", ilvl)) end
-		else
-			pdElement.ilvl:SetFormattedText("")
-		end
-		addon.functions.ApplyItemLevelTextColor(pdElement.ilvl, nil)
-		hideIlvlBackground(pdElement)
-
-		local textWidth = pdElement.ilvl:GetStringWidth()
-		pdElement.ilvlBackground:SetSize(textWidth + 6, pdElement.ilvl:GetStringHeight() + 4)
 	end
+	local scanLinks = inspectItemLinks
+	local scanning = true
 	for _, key in ipairs(inspectSlotOrder) do
 		local frameName = inspectSlotFrameNames[key]
 		local element = frameName and _G[frameName]
 		if element then
-			if element.enchant and InspectOpt("enchants") then applyCharEnchantPosition(element, key, InspectOpt("ilvl"), true) end
+			if element.enchant and InspectOpt("enchants") then addon.ItemEnchantDisplay.Layout(element, key, InspectOpt("ilvl"), true) end
 			if element.borderGradient then applyMissingEnchantOverlayStyle(element.borderGradient) end
 			local itemLink = GetInventoryItemLink(unit, key)
+			if issecretvalue(itemLink) then itemLink = nil end
 			if inspectItemLinks[key] ~= itemLink then
 				inspectItemLinks[key] = itemLink
+				inspectItemLevels[key] = nil
 				inspectDone[key] = nil
 			end
-			if inspectDone[key] ~= true and inspectDone[key] ~= "pending" then
+			local needsLevel = itemLink and InspectOpt("ilvl") and not inspectItemLevels[key]
+			if (inspectDone[key] ~= true or needsLevel) and inspectDone[key] ~= "pending" then
 				if element.ilvl then element.ilvl:SetFormattedText("") end
 				if element.ilvlBackground then element.ilvlBackground:Hide() end
 				addon.ItemEnchantDisplay.Clear(element)
@@ -1442,11 +1409,9 @@ local function onInspect(arg1)
 					if eItem and not eItem:IsItemEmpty() then
 						inspectDone[key] = "pending"
 						eItem:ContinueOnItemLoad(function()
-							-- Link changed while item was loading; skip stale callback work.
-							if inspectItemLinks[key] ~= itemLink then
-								if inspectDone[key] == "pending" then inspectDone[key] = nil end
-								return
-							end
+							if scanLinks ~= inspectItemLinks or not InspectFrame or InspectFrame.unit ~= unit or inspectItemLinks[key] ~= itemLink then return end
+							local liveGUID = UnitGUID(unit)
+							if currentGUID and (issecretvalue(liveGUID) or currentGUID ~= liveGUID) then return end
 							inspectDone[key] = true
 							local displayCount = 0
 							if InspectOpt("gems") then
@@ -1520,7 +1485,10 @@ local function onInspect(arg1)
 										if v.type == 41 then itemLevelText = v.itemLevel end
 									end
 								end
-								if not itemLevelText then itemLevelText = eItem:GetCurrentItemLevel() end
+								if not issecretvalue(itemLevelText) and not itemLevelText then itemLevelText = eItem:GetCurrentItemLevel() end
+								if not issecretvalue(itemLevelText) and type(itemLevelText) == "number" and itemLevelText > 0 then
+									inspectItemLevels[key] = itemLevelText
+								end
 
 								element.ilvl:SetFormattedText(itemLevelText)
 								addon.functions.ApplyItemLevelTextColor(element.ilvl, color)
@@ -1544,7 +1512,6 @@ local function onInspect(arg1)
 										element.borderGradient:Hide()
 									end
 								end
-								applyCharEnchantPosition(element, key, InspectOpt("ilvl"), true)
 								applyEnchantTextStyle(element.enchant)
 								local mode = getEnchantDisplayMode()
 								local showMissingOverlay = shouldShowMissingEnchantOverlayForMode(mode)
@@ -1567,11 +1534,12 @@ local function onInspect(arg1)
 									end
 								end
 								local displayText = getEnchantDisplayText(mode, enchantText, showMissingEnchant, enchantWarning)
-								addon.ItemEnchantDisplay.Apply(element, displayText, enchantWarning)
+								addon.ItemEnchantDisplay.Apply(element, displayText, enchantWarning, key, InspectOpt("ilvl"), true)
 							else
 								if element.borderGradient then element.borderGradient:Hide() end
 								addon.ItemEnchantDisplay.Clear(element)
 							end
+							if not scanning then refreshInspectAverage(unit) end
 						end)
 					else
 						inspectDone[key] = true
@@ -1583,17 +1551,8 @@ local function onInspect(arg1)
 		end
 	end
 
-	if pdElement.ilvl then
-		if C_PaperDollInfo and C_PaperDollInfo.GetInspectItemLevel then
-			addon.functions.ApplyItemLevelTextStyle(pdElement.ilvl)
-			local ilvl = C_PaperDollInfo.GetInspectItemLevel(unit)
-			if ilvl then pdElement.ilvl:SetFormattedText(string.format("%.1f", ilvl)) end
-			addon.functions.ApplyItemLevelTextColor(pdElement.ilvl, nil)
-		else
-			pdElement.ilvl:SetFormattedText("")
-		end
-		hideIlvlBackground(pdElement)
-	end
+	scanning = false
+	refreshInspectAverage(unit)
 end
 
 addon.functions.onInspect = onInspect
@@ -1733,7 +1692,6 @@ local function setIlvlText(element, slot)
 				end
 
 				if CharOpt("enchants") then
-					applyCharEnchantPosition(element, slot, CharOpt("ilvl"), false)
 					applyEnchantTextStyle(element.enchant)
 					local mode = getEnchantDisplayMode()
 					local showMissingOverlay = shouldShowMissingEnchantOverlayForMode(mode)
@@ -1753,7 +1711,7 @@ local function setIlvlText(element, slot)
 						end
 					end
 					local displayText = getEnchantDisplayText(mode, enchantText, showMissingEnchant, enchantWarning)
-					addon.ItemEnchantDisplay.Apply(element, displayText, enchantWarning)
+					addon.ItemEnchantDisplay.Apply(element, displayText, enchantWarning, slot, CharOpt("ilvl"), false)
 				else
 					addon.ItemEnchantDisplay.Clear(element)
 				end
@@ -3026,7 +2984,6 @@ function addon.functions.initItemInventory()
 
 
 		value.enchant = value:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
-		applyCharEnchantPosition(value, key, CharOpt("ilvl"), false)
 		applyEnchantTextStyle(value.enchant)
 
 		value.gems = {}

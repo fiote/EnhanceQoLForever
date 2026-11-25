@@ -3,6 +3,7 @@ local L = LibStub("AceLocale-3.0"):GetLocale(addonName)
 
 local Loot = { enabled = false, rolls = {}, suppressed = {}, receipts = {}, nextReceipt = 0 }
 addon.LootReplacer = Loot
+Loot.skillUpIcon = "Interface\\Icons\\INV_Misc_Book_11"
 
 local hasAnySecretValues = _G.hasanysecretvalues
 local function hasSecretValues(...)
@@ -16,6 +17,7 @@ end
 
 local receiptFormats = {}
 local reputationFormats = {}
+local skillFormats = {}
 local function addReceiptFormat(formats, key, itemArgument)
 	local format = _G[key]
 	if not format then return end
@@ -64,6 +66,8 @@ for _, key in ipairs({
 }) do
 	addReceiptFormat(reputationFormats, key, 1)
 end
+addReceiptFormat(skillFormats, "ERR_SKILL_UP_SI", 1)
+addReceiptFormat(skillFormats, "SKILL_RANK_UP", 1)
 
 function Loot:CanReceive(category)
 	return self.enabled and self.config and self.config.received and self.config[category]
@@ -151,6 +155,18 @@ function Loot:OnReputationMessage(message)
 					icon = "Interface\\Icons\\Achievement_Reputation_01", time = GetTime(),
 				}, "receivedReputation")
 			end
+			return
+		end
+	end
+end
+
+function Loot:OnSkillMessage(message)
+	if not self:CanReceive("receivedSkillUps") or hasSecretValues(message) or type(message) ~= "string" then return end
+	for _, format in ipairs(skillFormats) do
+		local values = { message:match(format.pattern) }
+		local name, rank = values[format.item], values[format.count]
+		if name and name ~= "" and rank then
+			self:AddReceipt({ name = name .. ": " .. rank, icon = self.skillUpIcon, time = GetTime() }, "receivedSkillUps")
 			return
 		end
 	end
@@ -512,6 +528,8 @@ function Loot:OnEvent(event, ...)
 		self:ReceiveCurrency(first, select(3, ...))
 	elseif event == "CHAT_MSG_COMBAT_FACTION_CHANGE" then
 		self:OnReputationMessage(first)
+	elseif event == "CHAT_MSG_SKILL" then
+		self:OnSkillMessage(first)
 	elseif event == "LOOT_OPENED" then
 		self:Open(first, second)
 	elseif event == "LOOT_CLOSED" then
@@ -561,6 +579,7 @@ end
 local events = {
 	"LOOT_OPENED", "LOOT_CLOSED", "LOOT_SLOT_CLEARED", "LOOT_SLOT_CHANGED",
 	"CHAT_MSG_LOOT", "QUEST_LOOT_RECEIVED", "QUEST_TURNED_IN", "PLAYER_MONEY", "CURRENCY_DISPLAY_UPDATE", "CHAT_MSG_COMBAT_FACTION_CHANGE",
+	"CHAT_MSG_SKILL",
 	"START_LOOT_ROLL", "CANCEL_LOOT_ROLL", "CANCEL_ALL_LOOT_ROLLS", "CONFIRM_LOOT_ROLL", "CONFIRM_DISENCHANT_ROLL", "MAIN_SPEC_NEED_ROLL",
 	"GAME_PAD_ACTIVE_CHANGED", "PARTY_LOOT_METHOD_CHANGED", "PLAYER_ENTERING_WORLD", "PLAYER_LEAVING_WORLD",
 }

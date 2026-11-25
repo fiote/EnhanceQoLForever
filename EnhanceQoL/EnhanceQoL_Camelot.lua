@@ -3193,7 +3193,9 @@ addon.functions.GetCooldownViewerFadedAlpha = GetCooldownViewerFadedAlpha
 
 local function ApplyActionBarAlpha(bar, variable, config, combatOverride, skipFade, context)
 	if not bar then return end
+	local isPetBar = variable == "mouseoverActionBarPet"
 	if addon.variables and addon.variables.actionBarShowGrid then
+		if isPetBar then addon.functions.SetPetActionBarHidden(bar, false) end
 		ApplyAlphaToRegion(bar, 1, false)
 		return
 	end
@@ -3205,10 +3207,11 @@ local function ApplyActionBarAlpha(bar, variable, config, combatOverride, skipFa
 	else
 		cfg = GetActionBarVisibilityConfig(variable)
 	end
+	if isPetBar then addon.functions.SetPetActionBarHidden(bar, cfg and cfg.ALWAYS_HIDDEN == true or false) end
 	if not cfg then return end
 	local useFade = ShouldFadeActionBar(skipFade)
 	if cfg.ALWAYS_HIDDEN then
-		ApplyAlphaToRegion(bar, 0, useFade)
+		if not isPetBar then ApplyAlphaToRegion(bar, 0, useFade) end
 		return
 	end
 	local ctx = context or GetActionBarVisibilityContext(combatOverride)
@@ -3278,7 +3281,11 @@ local function EQOL_HideBarIfNotHovered(bar, variable)
 		local fadedAlpha = GetActionBarFadedAlpha()
 		local baseAlpha = GetActionBarBaseAlpha(current, fadedAlpha)
 		if current.ALWAYS_HIDDEN then
-			ApplyAlphaToRegion(bar, 0, useFade)
+			if variable == "mouseoverActionBarPet" then
+				ApplyActionBarAlpha(bar, variable, current)
+			else
+				ApplyAlphaToRegion(bar, 0, useFade)
+			end
 			return
 		end
 		if ActionBarShouldForceShowByConfig(current, context) then
@@ -3364,6 +3371,7 @@ local function UpdateActionBarMouseover(barName, config, variable)
 	if not cfg then
 		bar:SetScript("OnEnter", nil)
 		bar:SetScript("OnLeave", nil)
+		if variable == "mouseoverActionBarPet" then addon.functions.SetPetActionBarHidden(bar, false) end
 		bar:SetAlpha(1)
 		if EQOL_LastMouseoverVar == variable then
 			if EQOL_LastMouseoverBar == bar then EQOL_LastMouseoverBar = nil end

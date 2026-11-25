@@ -452,6 +452,17 @@ local frames = {
 		userPlaced = true,
 	},
 	{
+		id = "TradeFrame",
+		label = _G.TRADE or "Trade",
+		group = "vendors",
+		names = { "TradeFrame" },
+		addon = "Blizzard_UIPanels_Game",
+		handlesRelative = { "TitleContainer" },
+		handlesOnly = true,
+		defaultEnabled = true,
+		newTagID = "MoverTradeFrame",
+	},
+	{
 		id = "AuctionHouseFrame",
 		label = L["Auction House"] or "Auction House",
 		group = "vendors",

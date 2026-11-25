@@ -226,6 +226,7 @@ end
 
 function Reminder:MakeSharedBuffWarningEntry(spellIds, spellId, label, missing, total)
 	local entry = self:MakeSpellInteractionEntry(spellIds, spellId, label, missing, total)
+	entry.groupCast = true
 	entry.warningCache = self:GetGroupBuffStateCache(spellIds, false)
 	return entry
 end

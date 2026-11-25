@@ -2,7 +2,7 @@
 ## X-EQOL-Flavor: forever
 ## Title: Enhance QoL Bags
 ## Author: R41Z0R
-## Version: 13.24.1
+## Version: 13.24.2
 ## Notes: Custom bag and bank interface
 ## Notes-deDE: Eigene Taschen- und Bankoberflaeche
 ## Notes-esES: Interfaz personalizada para bolsas y banco

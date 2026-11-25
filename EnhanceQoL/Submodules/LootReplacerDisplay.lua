@@ -9,16 +9,18 @@ local MAX_RECEIPT_ROWS = 10
 local defaults = {
 	point = "TOPLEFT", relativePoint = "CENTER", x = 170, y = 60,
 	width = 320, scale = 1, rowHeight = 36, iconSize = 24, spacing = 3, sectionSpacing = 9,
+	rowSide = "LEFT",
 	font = "", fontSize = 13, outline = addon.functions.GetGlobalFontStyleConfigKey(), quality = true,
 	textAlign = "LEFT", textX = 0, textY = 0, textClassColor = false,
 	textColor = { r = 0.94, g = 0.92, b = 0.88, a = 1 },
 	background = { r = 0.045, g = 0.055, b = 0.075, a = 0.86 },
 	backgroundEnabled = true, backgroundTexture = "", backgroundInset = 0, backgroundClassColor = false,
-	border = true, borderTexture = "", borderSize = 2, borderOffset = 0, borderColorMode = "QUALITY",
+	border = true, borderTexture = "", accentSide = "LEFT", borderSize = 2, borderOffset = 0, borderColorMode = "QUALITY",
 	borderColor = { r = 0.94, g = 0.92, b = 0.88, a = 0.8 },
 	animate = true, fadeIn = 140, fadeOut = 100,
 	received = true, receivedMaxRows = 3, receivedDuration = 3.5, receivedRise = 12,
 	receivedItems = true, receivedMoney = true, receivedCurrencies = true, receivedReputation = true, receivedQuestXP = true,
+	receivedSkillUps = false,
 	buttonSize = 22, timer = true,
 	timerHeight = 1, timerText = false, timerFont = "", timerOutline = addon.functions.GetGlobalFontStyleConfigKey(),
 	timerFontSize = 12, timerTextColor = { r = 0.94, g = 0.92, b = 0.88, a = 1 },
@@ -137,18 +139,12 @@ local function newRow(parent)
 	row.background = row:CreateTexture(nil, "BACKGROUND")
 	row.background:SetAllPoints()
 	row.edge = row:CreateTexture(nil, "BORDER")
-	row.edge:SetPoint("TOPLEFT")
-	row.edge:SetPoint("BOTTOMLEFT")
-	row.edge:SetWidth(2)
 	row.border = CreateFrame("Frame", nil, row, "BackdropTemplate")
 	row.timer = row:CreateTexture(nil, "ARTWORK")
 	row.timerLabel = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	row.timerLabel:SetJustifyH("RIGHT")
 	row.timerLabel:SetWordWrap(false)
 	row.item = CreateFrame("Button", nil, row)
 	row.item:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-	row.item:SetPoint("TOPLEFT")
-	row.item:SetPoint("BOTTOMLEFT")
 	addHighlight(row.item)
 	row.item:SetScript("OnEnter", function(button) showItemTooltip(button, row) end)
 	row.item:SetScript("OnLeave", hideTooltip)
@@ -164,7 +160,6 @@ local function newRow(parent)
 	end)
 
 	row.icon = row.item:CreateTexture(nil, "ARTWORK")
-	row.icon:SetPoint("LEFT", 8, 0)
 	row.icon:SetTexCoord(0.075, 0.925, 0.075, 0.925)
 	row.title = row.item:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 	row.title:SetJustifyH("LEFT")
@@ -196,7 +191,6 @@ local function newRow(parent)
 	end
 
 	row.result = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	row.result:SetPoint("RIGHT", -9, 0)
 	row.fade = row:CreateAnimationGroup()
 	row.fade:SetToFinalAlpha(true)
 	row.alpha = row.fade:CreateAnimation("Alpha")
@@ -324,8 +318,13 @@ local function styleRow(row, data, cfg, width, sample, style)
 	row.data, row.sample = data, sample
 	local height, timerBand = rowMetrics(cfg, data)
 	local extraHeight = math.max(0, timerBand - 1)
+	local mirrored = style.mirrored
+	local itemSide, actionSide = style.itemSide, style.actionSide
+	local direction = mirrored and -1 or 1
 	row:SetSize(width, height)
-	row.item:SetPoint("BOTTOMLEFT", 0, extraHeight)
+	row.item:ClearAllPoints()
+	row.item:SetPoint("TOP" .. itemSide)
+	row.item:SetPoint("BOTTOM" .. itemSide, 0, extraHeight)
 	row.background:SetShown(cfg.backgroundEnabled)
 	if cfg.backgroundEnabled then
 		local inset = cfg.backgroundInset
@@ -344,9 +343,11 @@ local function styleRow(row, data, cfg, width, sample, style)
 	row.edge:SetShown(accent)
 	if accent then
 		local offset = cfg.borderOffset
+		local accentSide = cfg.accentSide == "RIGHT" and "RIGHT" or "LEFT"
+		local offsetX = accentSide == "RIGHT" and offset or -offset
 		row.edge:ClearAllPoints()
-		row.edge:SetPoint("TOPLEFT", -offset, offset)
-		row.edge:SetPoint("BOTTOMLEFT", -offset, -offset)
+		row.edge:SetPoint("TOP" .. accentSide, offsetX, offset)
+		row.edge:SetPoint("BOTTOM" .. accentSide, offsetX, -offset)
 		row.edge:SetWidth(cfg.borderSize)
 		row.edge:SetColorTexture(borderColor.r, borderColor.g, borderColor.b, cfg.borderColor.a)
 	end
@@ -365,6 +366,8 @@ local function styleRow(row, data, cfg, width, sample, style)
 	end
 	local iconSize = math.min(cfg.iconSize, cfg.rowHeight - 6)
 	local fontSize = math.min(cfg.fontSize, cfg.rowHeight - 8)
+	row.icon:ClearAllPoints()
+	row.icon:SetPoint(itemSide, direction * 8, 0)
 	row.icon:SetSize(iconSize, iconSize)
 	row.icon:SetTexture(data.icon or 134400)
 	row.icon:SetDesaturated(data.locked == true)
@@ -382,7 +385,7 @@ local function styleRow(row, data, cfg, width, sample, style)
 			button:SetAlpha(data[choice.id] and 1 or 0.36)
 		end
 	end
-	-- Pack only visible actions towards the right edge.
+	-- Pack only visible actions towards the edge opposite the item.
 	local buttonWidth = 0
 	if actionCount > 0 then
 		local itemSpace = iconSize + 50
@@ -392,7 +395,7 @@ local function styleRow(row, data, cfg, width, sample, style)
 			if button:IsShown() then
 				button:SetSize(buttonSize, buttonSize)
 				button:ClearAllPoints()
-				button:SetPoint("RIGHT", -6 - buttonWidth, extraHeight / 2)
+				button:SetPoint(actionSide, -direction * (6 + buttonWidth), extraHeight / 2)
 				buttonWidth = buttonWidth + buttonSize + 2
 			end
 		end
@@ -400,6 +403,8 @@ local function styleRow(row, data, cfg, width, sample, style)
 
 	row.result:SetShown(data.submitted == true)
 	if data.submitted then
+		row.result:ClearAllPoints()
+		row.result:SetPoint(actionSide, -direction * 9, 0)
 		font(row.result, cfg, style.text, fontSize)
 		row.result:SetText(data.result or "✓")
 		buttonWidth = row.result:GetStringWidth() + 8
@@ -415,18 +420,19 @@ local function styleRow(row, data, cfg, width, sample, style)
 		text = ("%s ×%d"):format(text, data.count)
 	end
 	title:SetText(text)
-	local left = iconSize + 16
-	local right = math.max(left + 1, itemWidth - 8)
-	local align, anchorX, titleWidth = "LEFT", left, right - left
+	local start = iconSize + 16
+	local finish = math.max(start + 1, itemWidth - 8)
+	local align, anchorX, titleWidth = itemSide, start, finish - start
 	if cfg.textAlign == "CENTER" or cfg.textAlign == "RIGHT" then
-		align = cfg.textAlign
-		anchorX = align == "CENTER" and (left + right) / 2 or right
+		align = cfg.textAlign == "CENTER" and "CENTER" or actionSide
+		anchorX = align == "CENTER" and (start + finish) / 2 or finish
 		local naturalWidth = title:GetUnboundedStringWidth()
 		if not (issecretvalue and issecretvalue(naturalWidth)) then titleWidth = math.max(1, math.min(titleWidth, math.ceil(naturalWidth))) end
 	end
 	title:ClearAllPoints()
 	title:SetWidth(titleWidth)
-	title:SetPoint(align, row.item, "LEFT", anchorX + cfg.textX, cfg.textY)
+	title:SetJustifyH(align)
+	title:SetPoint(align, row.item, itemSide, direction * anchorX + cfg.textX, cfg.textY)
 	title:SetAlpha(data.locked and 0.62 or 1)
 
 	row.timerSpan = nil
@@ -442,7 +448,9 @@ local function styleRow(row, data, cfg, width, sample, style)
 			addon.functions.ApplyFontString(label, cfg.timerFont, cfg.timerFontSize, cfg.timerOutline, nil, defaults.timerOutline)
 			local tint = cfg.timerTextColor
 			label:SetTextColor(tint.r, tint.g, tint.b, tint.a)
-			label:SetPoint("BOTTOMRIGHT", -6, (timerBand - cfg.timerFontSize - 2) / 2)
+			label:ClearAllPoints()
+			label:SetJustifyH(actionSide)
+			label:SetPoint("BOTTOM" .. actionSide, -direction * 6, (timerBand - cfg.timerFontSize - 2) / 2)
 			label:SetSize(labelWidth, cfg.timerFontSize + 2)
 		end
 		row.timerSpan = width - 2 - labelSpace
@@ -450,13 +458,16 @@ local function styleRow(row, data, cfg, width, sample, style)
 		local offsetY = (timerBand - cfg.timerHeight) / 2
 		row.timer:SetShown(not bar)
 		if bar then
-			bar:SetPoint("BOTTOMLEFT", 2, offsetY)
+			bar:ClearAllPoints()
+			bar:SetPoint("BOTTOM" .. itemSide, direction * 2, offsetY)
+			bar:SetReverseFill(mirrored)
 			bar:SetSize(row.timerSpan, cfg.timerHeight)
 			bar:SetStatusBarColor(color.r, color.g, color.b, 0.8)
 			bar:Show()
 		else
 			stopNativeTimer(row)
-			row.timer:SetPoint("BOTTOMLEFT", 2, offsetY)
+			row.timer:ClearAllPoints()
+			row.timer:SetPoint("BOTTOM" .. itemSide, direction * 2, offsetY)
 			row.timer:SetHeight(cfg.timerHeight)
 			row.timer:SetColorTexture(color.r, color.g, color.b, 0.8)
 		end
@@ -476,6 +487,7 @@ local sampleLoot = {
 	{ key = -3, name = ITEM_QUALITY1_DESC, icon = 133784, quality = 1 },
 }
 local sampleReceived = {
+	{ category = "receivedSkillUps", name = L["floatingLootSkillUpSample"] .. ": 75", icon = Loot.skillUpIcon },
 	{ category = "receivedItems", name = ITEM_QUALITY4_DESC, icon = 134419, quality = 4, count = 2 },
 	{ category = "receivedMoney", name = "1", icon = "Interface\\Icons\\INV_Misc_Coin_01" },
 	{ category = "receivedCurrencies", name = _G.CURRENCY, icon = 133784, count = 5, currency = true },
@@ -601,7 +613,11 @@ function Loot:Render()
 
 	local width = cfg.width
 	local classColor = getClassColor()
+	local mirrored = cfg.rowSide == "RIGHT"
 	local style = {
+		mirrored = mirrored,
+		itemSide = mirrored and "RIGHT" or "LEFT",
+		actionSide = mirrored and "LEFT" or "RIGHT",
 		text = cfg.textClassColor and classColor or cfg.textColor,
 		background = cfg.backgroundClassColor and classColor or cfg.background,
 		backgroundTexture = addon.functions.ResolveLSMMedia("background", cfg.backgroundTexture, WHITE_TEXTURE),
@@ -642,6 +658,10 @@ function Loot:Render()
 	if #slots > 0 then
 		self.footer:SetPoint("TOPLEFT", self.content, "TOPLEFT", outsetX, -y)
 		self.footer:SetWidth(width)
+		self.all:ClearAllPoints()
+		self.all:SetPoint("TOP" .. style.itemSide)
+		self.close:ClearAllPoints()
+		self.close:SetPoint("TOP" .. style.actionSide)
 		font(self.all.label, cfg, style.text)
 		font(self.close.label, cfg, style.text)
 		local allWidth = math.max(92, self.all.label:GetUnboundedStringWidth() + 14)
@@ -746,8 +766,10 @@ local function buildSettings()
 		})
 	end
 
+	local function sideOptions() return { LEFT = L["Left"], RIGHT = L["Right"] }, { "LEFT", "RIGHT" } end
+
 	local function dropdown(group, key, label, options, enabled, preview)
-		field(group, key, label, kind.Dropdown, {
+		return field(group, key, label, kind.Dropdown, {
 			height = 220,
 			isEnabled = enabled,
 			generator = function(_, root, data)
@@ -799,6 +821,7 @@ local function buildSettings()
 	slider("layout", "y", L["Offset Y"], -2000, 2000, 1)
 	slider("layout", "width", L["Width"], 220, 600, 1)
 	slider("layout", "scale", L["Scale"], 0.65, 1.6, 0.05, nil, formatDecimal)
+	dropdown("layout", "rowSide", L["floatingLootRowAlignment"], sideOptions).navigationField = "rowSide"
 	slider("layout", "rowHeight", L["floatingLootRowHeight"], 22, 76, 1)
 	slider("layout", "iconSize", L["Icon size"], 14, 64, 1)
 	slider("layout", "spacing", L["Spacing"], 0, 20, 1)
@@ -818,6 +841,9 @@ local function buildSettings()
 	dropdown("text", "outline", L["Font outline"], outlineOptions)
 	slider("text", "fontSize", FONT_SIZE, 8, 32, 1)
 	dropdown("text", "textAlign", L["classicReminderAlignment"], function()
+		if layoutConfig().rowSide == "RIGHT" then
+			return { LEFT = L["Right"], CENTER = L["Center"], RIGHT = L["Left"] }, { "RIGHT", "CENTER", "LEFT" }
+		end
 		return { LEFT = L["Left"], CENTER = L["Center"], RIGHT = L["Right"] }, { "LEFT", "CENTER", "RIGHT" }
 	end)
 	slider("text", "textX", L["Offset X"], -40, 40, 1)
@@ -842,6 +868,10 @@ local function buildSettings()
 	local function borderEnabled() return layoutConfig().border end
 	field("border", "border", L["Show"], kind.Checkbox)
 	media("border", "borderTexture", L["Border texture"], "border", L["floatingLootBorderAccent"], borderEnabled)
+	dropdown("border", "accentSide", L["floatingLootBorderAccentSide"], sideOptions, function()
+		local config = layoutConfig()
+		return config.border and config.borderTexture == ""
+	end).navigationField = "accentSide"
 	slider("border", "borderSize", L["Border size"], 1, 80, 1, borderEnabled)
 	slider("border", "borderOffset", L["Border offset"], -8, 80, 1, borderEnabled)
 	dropdown("border", "borderColorMode", L["Style"], function()
@@ -871,6 +901,7 @@ local function buildSettings()
 	field("animation", "receivedCurrencies", _G.CURRENCY, kind.Checkbox, { isEnabled = receivedEnabled })
 	field("animation", "receivedReputation", _G.REPUTATION, kind.Checkbox, { isEnabled = receivedEnabled })
 	field("animation", "receivedQuestXP", L["xpBarQuestXP"], kind.Checkbox, { isEnabled = receivedEnabled })
+	field("animation", "receivedSkillUps", L["floatingLootSkillUps"], kind.Checkbox, { isEnabled = receivedEnabled, navigationField = "receivedSkillUps" })
 
 	section("rolls", L["groupLootRollFrames"])
 	slider("rolls", "buttonSize", L["floatingLootButtonSize"], 16, 38, 1)
@@ -894,7 +925,7 @@ function Loot:SetPreview(enabled)
 	enabled = enabled and true or nil
 	if self.preview == enabled then return end
 	self.preview = enabled
-	self.sampleAnimationEnds, self.sampleAnimationKey = nil, nil
+	self.sampleAnimationEnds, self.sampleFadingOut = nil, nil
 	self:SyncLootRegistration()
 	self:ScanRolls()
 	self:RefreshRolls()
@@ -904,16 +935,15 @@ function Loot:ShowAnimationSample()
 	if not self.enabled or not self.config or self.session then return end
 	self:SetPreview(true)
 	local cfg = self.config
-	local key = self.activeRows["received:-4"] and "received:-4" or "slot:" .. sampleLoot[#sampleLoot].key
-	local row = self.activeRows[key]
-	if not row then return end
 	local duration = cfg.animate and cfg.fadeIn or 0
-	local rise = row.data.received and cfg.receivedRise > 0 and cfg.receivedRise or nil
-	fade(row, 0, 1, duration, rise)
-	local scroll = math.max(0, row.stackY + row:GetHeight() - self.display:GetHeight())
-	if scroll > self.display:GetVerticalScroll() then self.display:SetVerticalScroll(math.min(scroll, self.display:GetVerticalScrollRange())) end
-	self.sampleAnimationEnds = GetTime() + cfg.receivedDuration
-	self.sampleAnimationKey = key
+	for _, row in pairs(self.activeRows) do
+		if row.sample then
+			local rise = row.data.received and cfg.receivedRise > 0 and cfg.receivedRise or nil
+			fade(row, 0, 1, duration, rise)
+		end
+	end
+	self.sampleFadingOut = nil
+	self.sampleAnimationEnds = cfg.animate and GetTime() + duration / 1000 + cfg.receivedDuration or nil
 end
 
 function Loot:InitializeDisplay()
@@ -938,10 +968,8 @@ function Loot:InitializeDisplay()
 	local footer = CreateFrame("Frame", nil, content)
 	footer:SetHeight(25)
 	local all = textButton(footer, _G.LOOT_ALL or L["floatingLootAll"], function() Loot:LootAll() end)
-	all:SetPoint("TOPLEFT")
 	all:SetHeight(25)
 	local close = textButton(footer, CLOSE, function() if Loot.session then CloseLoot() end end)
-	close:SetPoint("TOPRIGHT")
 	close:SetHeight(25)
 
 	self.anchor, self.display, self.content = anchor, display, content
@@ -952,9 +980,18 @@ function Loot:InitializeDisplay()
 	self.events:SetScript("OnUpdate", function(_, elapsed)
 		if not self.enabled then return end
 		if self.sampleAnimationEnds and GetTime() >= self.sampleAnimationEnds then
-			local row = self.preview and self.activeRows[self.sampleAnimationKey]
-			self.sampleAnimationEnds, self.sampleAnimationKey = nil, nil
-			if row then fade(row, row:GetAlpha(), 0, self.config.animate and self.config.fadeOut or 0) end
+			local duration = self.config.animate and self.config.fadeOut or 0
+			if not self.sampleFadingOut and duration > 0 then
+				self.sampleAnimationEnds, self.sampleFadingOut = GetTime() + duration / 1000, true
+			else
+				self.sampleAnimationEnds, self.sampleFadingOut = nil, nil
+			end
+			for _, row in pairs(self.activeRows) do
+				if row.sample then
+					if self.sampleFadingOut then fade(row, row:GetAlpha(), 0, duration)
+					else fade(row, 1, 1, 0) end
+				end
+			end
 		end
 		local expired = self:ExpireReceipts()
 		if next(self.rolls) then

@@ -115,6 +115,25 @@ if addon.functions.CreateNavigationWaypointFallback and M.Read("showInGameNaviga
 	navigationFallback = addon.functions.CreateNavigationWaypointFallback()
 end
 M.Toggle("showInGameNavigation", "showInGameNavigation", "1", "0", navigationFallback)
+if navigationFallback then
+	addon.functions.SettingsCreateSlider(category, {
+		var = "navigationWaypointScale",
+		newTagID = "navigationWaypointScale",
+		key = false,
+		storage = false,
+		trackCustomized = false,
+		text = L["navigationWaypointScale"],
+		get = navigationFallback.getScale,
+		func = navigationFallback.setScale,
+		default = 1,
+		min = 0.5,
+		max = 1.5,
+		step = 0.05,
+		indent = 16,
+		parentCheck = navigationFallback.get,
+		parentSection = section,
+	})
+end
 M.Toggle("autoAddNewSpells", "AutoPushSpellToActionBar", "1", "0")
 M.Preset("slowCameraRotation", { cameraYawMoveSpeed = "60", cameraPitchMoveSpeed = "60" })
 M.Toggle("hideLuaErrorWindow", "scriptErrors", "0", "1")

@@ -82,7 +82,7 @@ local function initResourceBarsDB()
 	init("xpBarTextCenterMode", xpDefaults.textCenterMode or xpDefaults.textMode or "CURMAXPERCENT")
 	init("xpBarQuestOverlay", xpDefaults.questOverlayEnabled ~= false)
 	init("xpBarQuestColor", xpDefaults.questColor)
-	for _, slot in ipairs({ "Extra1", "Extra2" }) do
+	for _, slot in ipairs({ "Extra1", "Extra2", "Extra3", "Extra4" }) do
 		for _, field in ipairs({ "Mode", "Anchor", "OffsetX", "OffsetY" }) do
 			init("xpBarText" .. slot .. field, xpDefaults["text" .. slot .. field])
 		end

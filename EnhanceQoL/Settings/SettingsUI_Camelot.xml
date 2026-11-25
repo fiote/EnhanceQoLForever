@@ -8,6 +8,7 @@
 	<Script file='Quest_Camelot.lua'/>
 	<Script file='CombatDungeon_Camelot.lua'/>
 	<Script file='GearUpgrade_Camelot.lua'/>
+	<Script file='ItemEnchantDisplay.lua'/>
 	<Script file='ItemInventory_Camelot.lua'/>
 	<Script file='DefaultAuraContainers.lua'/>
 	<Script file='Loot_Camelot.lua'/>

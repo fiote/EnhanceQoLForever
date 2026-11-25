@@ -2,7 +2,7 @@
 ## X-EQOL-Flavor: forever
 ## Title: Enhance QoL Core
 ## Author: R41Z0R
-## Version: 13.24.1
+## Version: 13.24.2
 ## IconTexture: Interface\AddOns\EnhanceQoL\Icons\Icon.tga
 ## Category: Quality of Life
 ## X-Category: Quality of Life
@@ -75,6 +75,7 @@ Modules\ActionBarLabels.lua
 Core\Cleanup.lua
 Core\DevMode.lua
 Core\TotemVisibility.lua
+Core\PetActionBarVisibility.lua
 EnhanceQoL_Camelot.lua
 Core\MinimapTrackingMouseover.lua
 GeneratedChangelog.lua

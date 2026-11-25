@@ -91,7 +91,7 @@ local function progressBarProfile(id)
 	}
 	profile.splitGroups[id .. "Text"] = function(data)
 		local field = fieldOf(data)
-		for _, side in ipairs(id == "xpBar" and { "Left", "Center", "Right", "Extra1", "Extra2" } or { "Left", "Center", "Right" }) do
+		for _, side in ipairs(id == "xpBar" and { "Left", "Center", "Right", "Extra1", "Extra2", "Extra3", "Extra4" } or { "Left", "Center", "Right" }) do
 			if field:find("^text" .. side) then return id .. "Text" .. side, (side:find("Extra", 1, true) and L["xpBarText" .. side] or L[side .. " text"]) end
 		end
 		return id .. "TextStyle", L["General"]
