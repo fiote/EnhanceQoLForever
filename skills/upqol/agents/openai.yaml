@@ -1,0 +1,4 @@
+interface:
+  display_name: "Atualizar EnhanceQoL"
+  short_description: "Atualiza EnhanceQoL Forever preservando customizações"
+  default_prompt: "Use $upqol para preparar a atualização do EnhanceQoL Forever e apresentar o merge das customizações antes de instalar."
