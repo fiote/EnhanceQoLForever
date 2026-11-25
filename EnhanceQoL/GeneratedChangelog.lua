@@ -2,8 +2,27 @@
 local _, addon = ...
 
 addon.GeneratedChangelog = {
-	sourceTag = "13.24.0",
+	sourceTag = "13.24.1",
 	releases = {
+		{
+			tag = "13.24.1",
+			date = "2026-11-25",
+			sections = {
+				{
+					title = "Added",
+					items = {
+						"Loot: Enable Floating Loot to use a movable display for loot, group rolls, and received items, money, currencies, reputation, and quest XP. In Edit Mode, choose which rewards appear and customize the visible rows, appearance, animations, and roll timers. Three rewards appear at once by default, and additional rewards wait for a free row. When the junk deletion option is enabled and bags are full, its icon appears inside the loot window.",
+					},
+				},
+				{
+					title = "Fixed",
+					items = {
+						"Mover: You can now move the quest details popup by dragging its title bar.",
+						"Navigation: The 3D quest marker hides when its distance reads 0 yards.",
+					},
+				},
+			},
+		},
 		{
 			tag = "13.24.0",
 			date = "2026-11-24",

@@ -2,7 +2,7 @@
 ## X-EQOL-Flavor: forever
 ## Title: Enhance QoL Core
 ## Author: R41Z0R
-## Version: 13.24.0
+## Version: 13.24.1
 ## IconTexture: Interface\AddOns\EnhanceQoL\Icons\Icon.tga
 ## Category: Quality of Life
 ## X-Category: Quality of Life
@@ -99,6 +99,8 @@ Core\RangeDisplay\Editor_Camelot.lua
 Submodules\UIErrors.lua
 Submodules\GroupTools_Camelot.lua
 Submodules\LootToast.lua
+Submodules\LootReplacer.lua
+Submodules\LootReplacerDisplay.lua
 Modules\Aura\Init.lua
 Modules\Aura\DefensiveAuraPresets_Camelot.lua
 Modules\Aura\WellFed_Camelot.lua

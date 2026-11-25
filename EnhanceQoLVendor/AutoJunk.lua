@@ -40,41 +40,72 @@ function M.FindCheapest()
 	return cheapest
 end
 
+local function hideTooltip(button)
+	if GameTooltip:IsOwned(button) then GameTooltip:Hide() end
+end
+
+local function createButton(parent, floating)
+	local button
+	if floating then
+		button = CreateFrame("Button", nil, parent, "InsecureActionButtonTemplate")
+		button:SetSize(22, 22)
+		button:SetPoint("CENTER")
+		local icon = button:CreateTexture(nil, "ARTWORK")
+		icon:SetSize(13, 13)
+		icon:SetPoint("CENTER")
+		icon:SetAtlas("common-icon-redx")
+		button:SetNormalTexture(icon)
+		button:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+		button:SetMotionScriptsWhileDisabled(true)
+	else
+		button = CreateFrame("Button", "EnhanceQoLLootJunkButton", parent, "UIPanelButtonTemplate,InsecureActionButtonTemplate")
+		button:SetSize(190, 26)
+		button:SetPoint("TOP", parent, "BOTTOM", 0, -4)
+		button:SetText(L["vendorLootJunkButtonLabel"])
+		parent:HookScript("OnShow", function() M.Refresh() end)
+	end
+	button:RegisterForClicks("LeftButtonUp")
+	button:SetScript("OnClick", function(self) M.DeleteSelected(self) end)
+	button:SetScript("OnEnter", function(self)
+		if self ~= M.button or not M.entry then return end
+		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+		GameTooltip:SetText(L["vendorLootJunkButtonLabel"])
+		GameTooltip:AddLine(string.format(L["vendorLootJunkButtonTooltip"], M.entry.link, M.entry.count, C_CurrencyInfo.GetCoinTextureString(M.entry.value)), 1, 1, 1, true)
+		GameTooltip:Show()
+	end)
+	button:SetScript("OnLeave", hideTooltip)
+	button:SetScript("OnHide", hideTooltip)
+	return button
+end
+
 function M.Refresh()
 	-- Cursor events fire inside pickup/delete. Keep the clicked button active until the action finishes.
 	if M.deleting then return end
-	local lootFrame = _G.LootFrame
-	if not M.button and lootFrame then
-		M.button = CreateFrame("Button", "EnhanceQoLLootJunkButton", lootFrame, "UIPanelButtonTemplate,InsecureActionButtonTemplate")
-		M.button:SetSize(190, 26)
-		M.button:SetPoint("TOP", lootFrame, "BOTTOM", 0, -4)
-		M.button:SetText(L["vendorLootJunkButtonLabel"])
-		M.button:RegisterForClicks("LeftButtonUp")
-		M.button:SetScript("OnClick", function() M.DeleteSelected() end)
-		M.button:SetScript("OnEnter", function(self)
-			if not M.entry then return end
-			GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-			GameTooltip:SetText(L["vendorLootJunkButtonLabel"])
-			GameTooltip:AddLine(string.format(L["vendorLootJunkButtonTooltip"], M.entry.link, M.entry.count, C_CurrencyInfo.GetCoinTextureString(M.entry.value)), 1, 1, 1, true)
-			GameTooltip:Show()
-		end)
-		M.button:SetScript("OnLeave", function() GameTooltip:Hide() end)
-		M.button:SetScript("OnHide", function(self)
-			if GameTooltip:IsOwned(self) then GameTooltip:Hide() end
-		end)
-		lootFrame:HookScript("OnShow", function() M.Refresh() end)
+	local loot = addon.LootReplacer
+	local footer = loot and loot.junkButtonParent
+	local button
+	if footer then
+		M.floatingButton = M.floatingButton or createButton(footer, true)
+		button = M.floatingButton
+	elseif _G.LootFrame then
+		M.blizzardButton = M.blizzardButton or createButton(_G.LootFrame, false)
+		button = M.blizzardButton
 	end
-	if not M.button then return end
+	if M.button and M.button ~= button then M.button:Hide() end
+	M.button = button
 	M.entry = nil
+	if not button then return end
 	if M.lootOpen and addon.db and addon.db.vendorLootJunkButton == true then M.entry = M.FindCheapest() end
-	M.button:SetShown(M.entry ~= nil)
-	M.button:SetEnabled(not UnitAffectingCombat("player") and not InCombatLockdown() and GetCursorInfo() == nil)
-	if GameTooltip:IsOwned(M.button) then GameTooltip:Hide() end
+	local enabled = not UnitAffectingCombat("player") and not InCombatLockdown() and GetCursorInfo() == nil
+	button:SetShown(M.entry ~= nil)
+	button:SetEnabled(enabled)
+	if footer then button:SetAlpha(enabled and 1 or 0.4) end
+	hideTooltip(button)
 end
 
-function M.DeleteSelected()
+function M.DeleteSelected(button)
 	if not M.lootOpen or not M.entry or not addon.db or addon.db.vendorLootJunkButton ~= true then return end
-	if not M.button:IsShown() or UnitAffectingCombat("player") or InCombatLockdown() or GetCursorInfo() ~= nil then return end
+	if button ~= M.button or not button:IsVisible() or UnitAffectingCombat("player") or InCombatLockdown() or GetCursorInfo() ~= nil then return end
 	local entry = M.entry
 	local current = M.FindCheapest()
 	-- Never replace the displayed stack with a different target during the click.
@@ -101,7 +132,7 @@ function M.DeleteSelected()
 	end
 	M.deleting = false
 	M.entry = nil
-	M.button:Hide()
+	button:Hide()
 end
 
 addon.Vendor.functions.RefreshLootJunkButton = M.Refresh

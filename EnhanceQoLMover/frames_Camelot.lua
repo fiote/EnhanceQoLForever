@@ -723,6 +723,17 @@ local frames = {
 		defaultEnabled = true,
 	},
 	{
+		id = "QuestLogPopupDetailFrame",
+		label = L["MoverQuestDetails"],
+		group = "world",
+		names = { "QuestLogPopupDetailFrame" },
+		addon = "Blizzard_UIPanels_Game",
+		handlesRelative = { "TitleContainer" },
+		handlesOnly = true,
+		defaultEnabled = true,
+		newTagID = "MoverQuestLogPopupDetailFrame",
+	},
+	{
 		id = "StaticPopup",
 		label = L["Static Popups"] or "Static Popups",
 		group = "system",

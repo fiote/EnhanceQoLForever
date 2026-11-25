@@ -48,6 +48,20 @@ addon.SettingsLayout.vendorEconomyCalootCategorytegory = cLoot
 
 addon.functions.SettingsCreateHeadline(cLoot, L["LootPopups"], { parentSection = expandable })
 
+addon.functions.SettingsCreateCheckboxes(cLoot, {
+	{
+		var = "enableFloatingLoot",
+		text = L["floatingLoot"],
+		desc = L["floatingLootDesc"],
+		newTagID = "enableFloatingLoot",
+		func = function(value)
+			addon.db.enableFloatingLoot = value == true
+			addon.LootReplacer:SetEnabled(value)
+		end,
+		parentSection = expandable,
+	},
+})
+
 local data = {
 	{
 		var = "autoQuickLoot",

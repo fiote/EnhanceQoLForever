@@ -2,7 +2,7 @@
 ## X-EQOL-Flavor: forever
 ## Title: Enhance QoL Sound
 ## Author: R41Z0R
-## Version: 13.24.0
+## Version: 13.24.1
 ## Notes: Sound muting and audio helpers
 ## Notes-deDE: Sound-Stummschaltung und Audio-Helfer
 ## Notes-esES: Silenciado de sonidos y ayudas de audio

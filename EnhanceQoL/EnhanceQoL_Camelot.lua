@@ -4165,6 +4165,8 @@ local function initMisc()
 	addon.functions.InitDBValue("quickSkipCinematic", false)
 	addon.functions.InitDBValue("ignoreTalkingHead", false)
 	addon.functions.InitDBValue("autoHideBossBanner", false)
+	addon.functions.InitDBValue("enableFloatingLoot", false)
+	addon.functions.InitDBValue("floatingLootLayouts", {})
 	addon.functions.InitDBValue("autoQuickLoot", false)
 	addon.functions.InitDBValue("autoQuickLootWithShift", false)
 	addon.functions.InitDBValue("hideMinimapButton", false)
@@ -6475,6 +6477,7 @@ local function setAllHooks()
 	initUnitFrame()
 	initMap()
 	initLootToast()
+	addon.LootReplacer:SetEnabled(addon.db.enableFloatingLoot)
 	initBagsFrame()
 
 	local LSM = LibStub("LibSharedMedia-3.0")
@@ -6632,6 +6635,7 @@ local function setAllHooks()
 		if addon.functions and addon.functions.RefreshDefaultNameplateTextStyle then addon.functions.RefreshDefaultNameplateTextStyle() end
 		if addon.functions and addon.functions.RefreshQuestTrackerTextStyle then addon.functions.RefreshQuestTrackerTextStyle(true) end
 		if addon.RangeDisplay then addon.RangeDisplay:ApplyStyle() end
+		if addon.LootReplacer and addon.LootReplacer.enabled then addon.LootReplacer:Render() end
 		if addon.CombatText then
 			if addon.CombatText.ApplyStyle then addon.CombatText:ApplyStyle() end
 			if addon.CombatText.UpdateFrameSize then addon.CombatText:UpdateFrameSize() end

@@ -2,15 +2,15 @@
 
 Registro inicial da skill em 24/11/2026. Confira o estado atual em disco antes de usar estas informações para uma atualização.
 
-**Instalado agora: 13.24.0 Forever + customizações locais.**
+**Instalado agora: 13.24.1 Forever + customizações locais.**
 
 ## Instalação
 
 - Checkout ativo: `C:/Program Files (x86)/World of Warcraft Workspace/EnhanceQoLRepo`.
 - Remoto: `https://github.com/fiote/EnhanceQoLForever`, branch observada `master`.
 - HEAD observado ao criar a skill: `82e0a601169b6454a4d84914b3fa3c961d00c8c2`, sincronizado com `origin/master`, sem alterações pendentes.
-- TOC carregado no cliente Forever: `EnhanceQoL/EnhanceQoL_Camelot.toc`, versão **13.24.0**, interface **16001**, `X-EQOL-Flavor: forever`.
-- Projeto CurseForge indicado pelo TOC: **1076354**. Pacotes originais confirmados: `EnhanceQoL-13.23.0-forever.zip` (file ID 9680343) e `EnhanceQoL-13.24.0-forever.zip` (file ID 9800290). Preserve o original 13.24.0 como base da próxima atualização; IDs, URLs e hashes estão no manifesto da preparação.
+- TOC carregado no cliente Forever: `EnhanceQoL/EnhanceQoL_Camelot.toc`, versão **13.24.1**, interface **16001**, `X-EQOL-Flavor: forever`.
+- Projeto CurseForge indicado pelo TOC: **1076354**. Pacotes originais confirmados: `EnhanceQoL-13.23.0-forever.zip` (file ID 9680343) e `EnhanceQoL-13.24.0-forever.zip` (file ID 9800290) e `EnhanceQoL-13.24.1-forever.zip` (file ID 9807437). Preserve o original 13.24.1 como base da próxima atualização; IDs, URLs e hashes estão no manifesto da preparação.
 - As 18 pastas `EnhanceQoL*` em `Interface/AddOns` são junctions para os módulos do checkout externo. Preserve esses links. A cópia antiga em `Interface/Workspace` não é um destino de trabalho.
 - Dados da atualização: `C:/Program Files (x86)/World of Warcraft Workspace/EnhanceQoLUpdater`, fora do Git e da instalação do jogo.
 
@@ -36,7 +36,7 @@ Foram executados testes Lua de sintaxe, seleção/reset, cache após troca de po
 
 ## Outras diferenças
 
-Este documento não é um inventário completo do commit inicial. Antes de atualizar, compare todos os módulos com o ZIP original da versão efetivamente instalada — agora **13.24.0 Forever**. Inspecione também TOCs/XML Camelot, compatibilidade de APIs, grupos de talentos e os demais componentes `*_Camelot`. Não apague uma adaptação só porque ela não aparece na lista acima.
+Este documento não é um inventário completo do commit inicial. Antes de atualizar, compare todos os módulos com o ZIP original da versão efetivamente instalada — agora **13.24.1 Forever**. Inspecione também TOCs/XML Camelot, compatibilidade de APIs, grupos de talentos e os demais componentes `*_Camelot`. Não apague uma adaptação só porque ela não aparece na lista acima.
 
 O nome de um arquivo `_Camelot` por si só não prova que seja uma customização nossa: ele pode vir do autor. Registre a origem com base na comparação real.
 
@@ -56,3 +56,18 @@ Atualização aplicada após aprovação explícita do usuário, com o WoW fecha
 - Git: skill versionada em `38dd89b`; atualização identificada pelo commit `v13.24.0` em `master`. O resultado do push fica no manifesto.
 
 Preparação e evidências: `C:/Program Files (x86)/World of Warcraft Workspace/EnhanceQoLUpdater/.upqol/preparation-13.23.0-to-13.24.0-fda3a4efbc/`. Prioridades para conferir no jogo: filtros e lista lateral do editor, troca de stance/form e novo Hover Buff Panel.
+
+### 13.24.0 → 13.24.1 Forever
+
+Atualização aplicada em 25/11/2026 após aprovação explícita do usuário e com o WoW fechado. Base original 13.24.0: file ID 9800290; pacote novo 13.24.1: file ID 9807437. Os ZIPs e as árvores originais foram preservados no Workspace externo.
+
+- Mudanças do autor: Floating Loot configurável para loot, rolagens e recompensas (desativado por padrão), popup de detalhes de quests movível pelo título e correção do marcador 3D de quests quando a distância é 0 jardas.
+- O autor modificou 57 arquivos e acrescentou `EnhanceQoL/Submodules/LootReplacer.lua` e `LootReplacerDisplay.lua`, sem remoções. Dos 9 arquivos customizados, 7 foram preservados integralmente e apenas as traduções enUS/ptBR precisaram de merge, sem conflitos.
+- Mantidos classe/spec por spell, stance/form, reset, traduções, lista lateral de edição independente da postura e filtro de stance no Hover Buff Panel com preview completo. Nenhuma customização foi removida, considerada obsoleta ou duplicada.
+- Os 18 módulos e suas junctions foram preservados. Os 1.275 arquivos instalados conferem com os hashes do resultado revisado. Backup verificado dos 1.273 arquivos anteriores: `C:/Program Files (x86)/World of Warcraft Workspace/EnhanceQoLUpdater/EnhanceQoL-13.24.0-mods-backup`.
+- CurseForge standalone sincronizado com o file ID 9807437 e reaberto. Como o cliente ainda conhecia a 13.24.0 como última versão, os campos de versão foram atualizados com os metadados oficiais da 13.24.1 e hashes do ZIP, preservando os demais campos do cliente. Backup: `EnhanceQoLUpdater/.upqol/AddonGameInstance.before-13.24.1.json`. As outras entradas foram preservadas; SavedVariables não foram alteradas.
+- Retenção: versões 13.24.1, 13.24.0 e 13.23.0 preservadas; nenhuma exclusão necessária ou executada.
+- Validações: 29 arquivos Lua compilados em Lua 5.1, 36 TOCs e 410 referências de carregamento conferidos; sem conflitos, novas misturas de finais de linha ou linhas customizadas perdidas. Passaram as regressões de classe/spec, stance/form, cache, reset, lista lateral e Hover Buff Panel. Não houve teste dentro do jogo.
+- Git: commit `v13.24.1` em `master`, com push para `origin/master` conforme a proposta. O resultado fica no manifesto da preparação.
+
+Preparação e evidências: `C:/Program Files (x86)/World of Warcraft Workspace/EnhanceQoLUpdater/.upqol/preparation-13.24.0-to-13.24.1-12e4557b8e/`. Prioridades no jogo: Floating Loot se ativado, popup de quests, marcador 3D e continuidade dos filtros do painel/editor.

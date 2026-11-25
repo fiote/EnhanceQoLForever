@@ -1001,6 +1001,11 @@ local function cleanupLegacyProfileKeys(profile)
 		profile.nameplateHideFriendlyPlayerRealms = nil
 		profile.nameplateFriendlyPlayerNamesOnly = nil
 		profile.nameplateFriendlyPlayerClassColorNames = nil
+		if type(profile.floatingLootLayouts) == "table" then
+			for _, layout in pairs(profile.floatingLootLayouts) do
+				if type(layout) == "table" then layout.shadow, layout.shadowColor, layout.shadowX, layout.shadowY = nil, nil, nil, nil end
+			end
+		end
 	end
 	cleanupForeverRetailOptions(profile)
 	addon.functions.CleanupTotemActionBarProfile(profile)

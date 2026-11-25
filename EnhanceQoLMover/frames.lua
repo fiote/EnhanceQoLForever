@@ -824,6 +824,20 @@ if addon.variables.isForever and not addon.variables.isTBC then
 	})
 end
 
+if not addon.variables.isTBC then
+	table.insert(frames, {
+		id = "QuestLogPopupDetailFrame",
+		label = L["MoverQuestDetails"],
+		group = "world",
+		names = { "QuestLogPopupDetailFrame" },
+		addon = "Blizzard_UIPanels_Game",
+		handlesRelative = { "TitleContainer" },
+		handlesOnly = true,
+		defaultEnabled = true,
+		newTagID = "MoverQuestLogPopupDetailFrame",
+	})
+end
+
 if addon.variables.isTBC then
 	for _, entry in ipairs(frames) do
 		if entry.id == "FriendsFrame" then

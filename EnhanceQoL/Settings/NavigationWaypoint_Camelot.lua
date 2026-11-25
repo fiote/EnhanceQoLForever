@@ -30,7 +30,7 @@ function addon.functions.CreateNavigationWaypointFallback()
 	distanceText:SetPoint("TOP", icon, "BOTTOM", 0, -8)
 
 	local anchor = nav.GetFrame()
-	local attachedTo, lastX, lastY, lastDistance, atlas
+	local attachedTo, lastX, lastY, lastDistance, atlas, trackingKind
 	local transparentUntil = 0
 
 	local function place(self)
@@ -74,6 +74,10 @@ function addon.functions.CreateNavigationWaypointFallback()
 			local distance = nav.GetDistance()
 			if not (issecretvalue and issecretvalue(distance)) and type(distance) == "number" and distance >= 0 then
 				distance = math.floor(distance + 0.5)
+				if trackingKind == tracking.Quest and distance == 0 then
+					if self:GetAlpha() ~= 0 then self:SetAlpha(0) end
+					return
+				end
 				if distance ~= lastDistance then
 					local text = distance >= 1000 and AbbreviateNumbers(distance) or tostring(distance)
 					distanceText:SetText(IN_GAME_NAVIGATION_RANGE:format(text))
@@ -110,6 +114,7 @@ function addon.functions.CreateNavigationWaypointFallback()
 			icon:SetAtlas(nextAtlas, true)
 			atlas, attachedTo = nextAtlas, nil
 		end
+		trackingKind = kind
 		place(marker)
 		marker:Show()
 	end
