@@ -981,6 +981,19 @@ function addon.functions.CleanupBagToolbarStorage()
  if addon.DB~=_G.EnhanceQoLBagsDB then clean(addon.DB) end
 end
 
+function addon.functions.CleanupTotemActionBarProfile(profile)
+	if type(profile) ~= "table" then return end
+	local mode = profile.actionBarTotemVisibility
+	if mode == "HIDDEN" or (mode == nil and profile.shaman_HideTotemActionBar == true) then
+		profile.actionBarTotemVisibility = { ALWAYS_HIDDEN = true }
+	elseif mode == "MOUSEOVER_COMBAT" then
+		profile.actionBarTotemVisibility = { MOUSEOVER = true, ALWAYS_IN_COMBAT = true }
+	elseif type(mode) ~= "table" then
+		profile.actionBarTotemVisibility = nil
+	end
+	profile.shaman_HideTotemActionBar = nil
+end
+
 local function cleanupLegacyProfileKeys(profile)
 	if type(profile) == "table" then
 		profile.movementSpeedStatEnabled = nil
@@ -990,6 +1003,7 @@ local function cleanupLegacyProfileKeys(profile)
 		profile.nameplateFriendlyPlayerClassColorNames = nil
 	end
 	cleanupForeverRetailOptions(profile)
+	addon.functions.CleanupTotemActionBarProfile(profile)
 	if addon.variables and addon.variables.isForever and not addon.variables.isTBC and type(profile) == "table" then
 		profile.TooltipShowMythicScore = nil
 		profile.TooltipMythicScoreRequireModifier = nil
@@ -1043,6 +1057,8 @@ local function cleanupCooldownPanelsStorageProfile(profile)
 				clearPanelDurationColors(panel.layout)
 				local layout = panel.layout
 				if type(layout) == "table" then
+					if layout.hoverBuffPanel == true then layout.layoutMode = "HOVER_BUFF" end
+					layout.hoverBuffPanel = nil
 					layout.barGroupNextId = nil
 					-- Older free groups retain migration input until the owning addon converts them.
 					if layout.barGroupsVersion == 2 and type(layout.barGroups) == "table" then
@@ -1676,7 +1692,21 @@ function addon.functions.CleanupMicroBarSizing()
 	cleanup(addon.dbDefaults)
 end
 
+local function cleanupAuctionSalesOptions()
+	local function cleanup(profile)
+		if type(profile) == "table" then profile.vendorAuctionSavePrices = nil end
+	end
+	local db = _G.EnhanceQoLDB
+	cleanup(db)
+	if type(db) == "table" and type(db.profiles) == "table" then
+		for _, profile in pairs(db.profiles) do cleanup(profile) end
+	end
+	cleanup(addon.db)
+	cleanup(addon.dbDefaults)
+end
+
 function addon.functions.CleanupOldStuff()
+	cleanupAuctionSalesOptions()
 	addon.functions.CleanupMicroBarSizing()
 	addon.functions.CleanupRetiredInventory()
 	addon.functions.StageLegacyChatHistory()

@@ -2873,6 +2873,7 @@ end
 addon.functions.EnsureSpellActivationOverlayWatcher = EnsureSpellActivationOverlayWatcher
 
 local hookedButtons = {}
+local mainActionBarHoverTargets = {}
 
 -- Keep action bars visible while interacting with SpellFlyout
 local EQOL_LastMouseoverBar
@@ -2939,6 +2940,11 @@ end
 
 local function ShouldShowActionBarOnMouseover(bar)
 	if MouseIsOver(bar) or EQOL_ShouldKeepVisibleByFlyout() then return true end
+	if bar == _G.MainActionBar then
+		for target in pairs(mainActionBarHoverTargets) do
+			if target:IsVisible() and MouseIsOver(target) then return true end
+		end
+	end
 	if IsActionBarMouseoverGroupEnabled() then return IsActionBarGroupHoverActive() end
 	return false
 end
@@ -3345,6 +3351,15 @@ local function UpdateActionBarMouseover(barName, config, variable)
 	end
 
 	local cfg = NormalizeActionBarVisibilityConfig(variable, config)
+	local useMainBarHoverTargets = bar == _G.MainActionBar and cfg and cfg.MOUSEOVER and not cfg.ALWAYS_HIDDEN
+
+	if bar == _G.MainActionBar and not useMainBarHoverTargets then
+		local hovered = addon.variables._eqolActionBarHoverFrames
+		for target, isEndCap in pairs(mainActionBarHoverTargets) do
+			if isEndCap then target:Hide() end
+			if hovered and hovered[target] then UpdateActionBarGroupHoverState(target, false) end
+		end
+	end
 
 	if not cfg then
 		bar:SetScript("OnEnter", nil)
@@ -3385,6 +3400,7 @@ local function UpdateActionBarMouseover(barName, config, variable)
 	local function handleButtonEnter(self)
 		local current = GetActionBarVisibilityConfig(variable)
 		if not current then return end
+		if current.ALWAYS_HIDDEN and mainActionBarHoverTargets[self] ~= nil then return end
 		if current.MOUSEOVER then
 			if IsActionBarMouseoverGroupEnabled() then
 				UpdateActionBarGroupHoverState(self, true)
@@ -3410,6 +3426,37 @@ local function UpdateActionBarMouseover(barName, config, variable)
 			return
 		end
 		ApplyActionBarAlpha(bar, variable, current)
+	end
+
+	if useMainBarHoverTargets then
+		if not next(mainActionBarHoverTargets) then
+			local page = bar.ActionBarPageNumber
+			if page and page.UpButton then mainActionBarHoverTargets[page.UpButton] = false end
+			if page and page.DownButton then mainActionBarHoverTargets[page.DownButton] = false end
+			local caps = bar.EndCaps
+			if caps then
+				for _, cap in pairs({ caps.LeftEndCap, caps.RightEndCap }) do
+					-- Follow the separately movable artwork and let clicks and hover reach frames beneath it.
+					local target = CreateFrame("Frame", nil, cap)
+					target:SetAllPoints()
+					mainActionBarHoverTargets[target] = true
+				end
+			end
+			for target, isEndCap in pairs(mainActionBarHoverTargets) do
+				target:HookScript("OnEnter", handleButtonEnter)
+				target:HookScript("OnLeave", handleButtonLeave)
+				target:HookScript("OnHide", handleButtonLeave)
+				if isEndCap then
+					target:SetMouseClickEnabled(false)
+					target:SetMouseMotionEnabled(true)
+					target:SetPropagateMouseMotion(true)
+				end
+			end
+		end
+		for target, isEndCap in pairs(mainActionBarHoverTargets) do
+			if isEndCap then target:Show() end
+			if target:IsVisible() and MouseIsOver(target) then handleButtonEnter(target) end
+		end
 	end
 
 	for i = 1, 12 do
@@ -5564,6 +5611,18 @@ local function initUI()
 		end
 	end
 
+	local function isButtonSinkLauncherMenuOpen(button)
+		local manager = Menu and Menu.GetManager and Menu.GetManager()
+		local menu = manager and manager.GetOpenMenu and manager:GetOpenMenu()
+		local owner = menu and menu.GetOwnerRegion and menu:GetOwnerRegion()
+		if isFrameAnchoredThrough(owner, button) then return true end
+
+		local dropdown = _G.DropDownList1
+		if not dropdown or not dropdown:IsShown() then return false end
+		local _, anchor = dropdown:GetPoint()
+		return isFrameAnchoredThrough(_G.UIDROPDOWNMENU_OPEN_MENU, button) or isFrameAnchoredThrough(anchor, button)
+	end
+
 	local function hookButtonSinkCloseOnClick(button)
 		addon.variables.buttonSinkClickHooks = addon.variables.buttonSinkClickHooks or setmetatable({}, { __mode = "k" })
 		if not button or addon.variables.buttonSinkClickHooks[button] then return end
@@ -5579,7 +5638,9 @@ local function initUI()
 				return
 			end
 			C_Timer.After(0, function()
-				if addon.variables.buttonSink == frame and frame:IsShown() then frame:Hide() end
+				if addon.variables.buttonSink ~= frame or not frame:IsShown() then return end
+				if isButtonSinkLauncherMenuOpen(self) then return end
+				frame:Hide()
 			end)
 		end)
 	end
@@ -6984,7 +7045,9 @@ function loadMain()
 	end
 	SlashCmdList["ENHANCEQOL"] = function(msg)
 		msg = tostring(msg or "")
-		if msg:lower():match("^%s*devmode%s*$") then
+		if msg:lower():match("^%s*guide%s*$") then
+			addon.functions.OpenFirstStartWizard()
+		elseif msg:lower():match("^%s*devmode%s*$") then
 			addon.functions.ToggleDevMode()
 		elseif msg:lower():match("^%s*spellgroups%s*$") then
 			local panels = addon.Aura and addon.Aura.CooldownPanels
@@ -7099,11 +7162,20 @@ function addon.functions.AutoSyncWarbandGold()
 	print((L["autoWarbandGoldWithdrawn"] or "Withdrew %s from Warband bank."):format(addon.functions.formatMoney(amountToWithdraw)))
 end
 
+local function initializeLoadedSubAddon(name)
+	if name == CHAT_SOCIAL_ADDON_NAME and addon.functions.InitializeChatSocialHistory then
+		addon.functions.InitializeChatSocialHistory()
+	elseif name == "EnhanceQoLVendor" then
+		local sales = addon.Vendor and addon.Vendor.AuctionSales
+		if sales then sales:Initialize() end
+	end
+end
+
 local function loadSubAddon(name)
 	if name == "EnhanceQoLTeleportCompendium" then return false end
 	if not name or name == "" then return false end
 	if C_AddOns.IsAddOnLoaded and C_AddOns.IsAddOnLoaded(name) then
-		if name == CHAT_SOCIAL_ADDON_NAME and addon.functions.InitializeChatSocialHistory then addon.functions.InitializeChatSocialHistory() end
+		initializeLoadedSubAddon(name)
 		return true
 	end
 
@@ -7111,7 +7183,7 @@ local function loadSubAddon(name)
 	if loadable or reason == "DEMAND_LOADED" then
 		local loaded = C_AddOns.LoadAddOn(name)
 		-- The child scripts and SavedVariables are available when the load returns.
-		if loaded == true and name == CHAT_SOCIAL_ADDON_NAME and addon.functions.InitializeChatSocialHistory then addon.functions.InitializeChatSocialHistory() end
+		if loaded == true then initializeLoadedSubAddon(name) end
 		return loaded == true
 	end
 
@@ -7160,6 +7232,7 @@ local eventHandlers = {
 	end,
 	["ADDON_LOADED"] = function(arg1)
 		if arg1 == addonName then
+			local freshSavedVariables = EnhanceQoLDB == nil
 			local legacy = {}
 			EnhanceQoLDB = EnhanceQoLDB or {}
 			if EnhanceQoLDB and not EnhanceQoLDB.profiles then
@@ -7317,6 +7390,9 @@ local eventHandlers = {
 					if info.var then addon.db.actionBarVisibilityUseGlobal[info.var] = true end
 				end
 			end
+
+			if freshSavedVariables then addon.db.classBuffReminderShowSolo = true end
+			addon.functions.QueueFirstStartWizard(freshSavedVariables)
 
 			EnhanceQoLDB.addonVersion = C_AddOns.GetAddOnMetadata(addonName, "Version")
 

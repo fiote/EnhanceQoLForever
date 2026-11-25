@@ -2696,7 +2696,7 @@ local function toggleCooldownViewerSettings()
 	end
 end
 
-local function toggleEditMode()
+local function toggleEditMode(openOnly)
 	if InCombatLockdown and InCombatLockdown() then return end
 	local frame = _G.EditModeManagerFrame
 	if not frame then
@@ -2707,6 +2707,7 @@ local function toggleEditMode()
 		end
 	end
 	if not frame then return end
+	if openOnly and frame:IsShown() then return true end
 	if frame.CanEnterEditMode and not frame:CanEnterEditMode() then return end
 	if frame:IsShown() then
 		if HideUIPanel then
@@ -2721,7 +2722,10 @@ local function toggleEditMode()
 			frame:Show()
 		end
 	end
+	return frame:IsShown()
 end
+
+function addon.functions.OpenEditMode() return toggleEditMode(true) end
 
 local function toggleQuickKeybindMode()
 	if InCombatLockdown and InCombatLockdown() then return end

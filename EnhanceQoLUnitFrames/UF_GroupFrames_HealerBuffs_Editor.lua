@@ -880,6 +880,22 @@ local function getClassDisplayName(classToken)
 	return tostring(LOCALIZED_CLASS_NAMES_MALE[token] or LOCALIZED_CLASS_NAMES_FEMALE[token] or token)
 end
 
+function Editor:UpdateRecipientClassesDropdown(dropdown, group)
+	local count, last = 0, nil
+	for _, token in ipairs(HB.RECIPIENT_CLASSES) do
+		if group and group.recipientClasses and group.recipientClasses[token] then
+			count, last = count + 1, token
+		end
+	end
+	local label = tr("All classes", "All classes")
+	if count == 1 then
+		label = getClassDisplayName(last)
+	elseif count > 1 then
+		label = string.format(tr("Dynamic Anchor Selected", "%d selected"), count)
+	end
+	UIDropDownMenu_SetText(dropdown, label)
+end
+
 local function buildFamilyOptionsByClass(classTokenFilter)
 	local options = buildFamilyOptionsForEditor(classTokenFilter)
 	local buckets, classOrder = {}, {}
@@ -1573,6 +1589,12 @@ function Editor:EnsureFrame()
 	controls.GroupName = createEditBox(groupControlParent, 220)
 	controls.GroupName:SetPoint("TOPLEFT", controls.GroupNameLabel, "TOPRIGHT", 12, 0)
 
+	if HB.RECIPIENT_CLASSES then
+		controls.RecipientClassesLabel = groupControlParent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+		controls.RecipientClassesLabel:SetText(tr("UFGroupHealerBuffEditorRecipientClasses", "Party/Raid Classes"))
+		controls.RecipientClasses = createDropdown(groupControlParent, 160)
+	end
+
 	controls.GroupStyleLabel = groupControlParent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 	controls.GroupStyleLabel:SetPoint("TOPLEFT", controls.GroupNameLabel, "BOTTOMLEFT", 0, -16)
 	controls.GroupStyleLabel:SetText(tr("UFGroupHealerBuffEditorStyleLocked", "Style (locked)"))
@@ -1769,6 +1791,12 @@ function Editor:EnsureFrame()
 			includeBottom(check)
 		end
 
+		if controls.RecipientClasses and controls.RecipientClasses:IsShown() then
+			beginRow(controls.RecipientClassesLabel, GAP_DROPDOWN)
+			controls.RecipientClasses:ClearAllPoints()
+			controls.RecipientClasses:SetPoint("TOPLEFT", controls.RecipientClassesLabel, "TOPRIGHT", 6, 12)
+			includeBottom(controls.RecipientClasses)
+		end
 		placeDropdown(controls.GroupAnchorLabel, controls.GroupAnchor)
 		placeCheck(controls.GroupAnchorOutside)
 		placeDropdown(controls.GroupGrowthLabel, controls.GroupGrowth)
@@ -2280,6 +2308,7 @@ function Editor:EnsureFrame()
 		placement.enabled = enabledCheck:GetChecked() == true
 		Editor:RefreshRuntimeNow()
 		Editor:RefreshLists()
+		if controls.RecipientClasses then Editor:RefreshGroupControls() end
 	end)
 
 	addGroup:SetScript("OnClick", function(self)
@@ -2503,6 +2532,42 @@ function Editor:EnsureFrame()
 		if not placement then return nil end
 		local groupId = Editor.selectedGroupId
 		return groupId and placement.groupsById and placement.groupsById[groupId] or nil
+	end
+
+	if controls.RecipientClasses then
+		local dropdown = controls.RecipientClasses
+		UIDropDownMenu_Initialize(dropdown, function(_, level)
+			local group = groupFromSelection()
+			if not group then return end
+
+			local function setClass(token)
+				if group ~= groupFromSelection() then return end
+				if token == nil then
+					group.recipientClasses = nil
+				else
+					local selected = group.recipientClasses or {}
+					selected[token] = not selected[token] and true or nil
+					group.recipientClasses = next(selected) and selected or nil
+				end
+				Editor:UpdateRecipientClassesDropdown(dropdown, group)
+				Editor:RefreshRuntimeNow()
+			end
+
+			local all = UIDropDownMenu_CreateInfo()
+			all.text = tr("All classes", "All classes")
+			all.notCheckable = true
+			all.func = function() setClass(nil) end
+			UIDropDownMenu_AddButton(all, level)
+			for _, token in ipairs(HB.RECIPIENT_CLASSES) do
+				local info = UIDropDownMenu_CreateInfo()
+				info.text = getClassDisplayName(token)
+				info.isNotRadio = true
+				info.keepShownOnClick = true
+				info.checked = group.recipientClasses and group.recipientClasses[token] == true
+				info.func = function() setClass(token) end
+				UIDropDownMenu_AddButton(info, level)
+			end
+		end)
 	end
 
 	local function ruleFromSelection()
@@ -3641,6 +3706,10 @@ function Editor:RefreshGroupControls()
 	self._controlUpdateLock = true
 	setControlVisible(controls.GroupStyleLabel, false)
 	setControlVisible(controls.GroupStyleValue, false)
+	if controls.RecipientClasses then
+		setFieldState(controls.RecipientClassesLabel, controls.RecipientClasses, group ~= nil, group ~= nil and placement.enabled == true)
+		self:UpdateRecipientClassesDropdown(controls.RecipientClasses, group)
+	end
 	if group then
 		local style = tostring(group.style or "ICON"):upper()
 		group.iconMode = tostring(group.iconMode or "ALL"):upper()

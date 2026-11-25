@@ -148,7 +148,7 @@ local function renderTable(parent)
 			label:SetText("X")
 			remove:SetScript("OnClick", function()
 				if not Reminder:IsEnabled() then return end
-				Reminder:RemoveCustomBuffDefinition(class, row.id)
+				Reminder:RemoveCustomBuffDefinition(class, row.itemId or row.id, row.itemId ~= nil)
 				local config = addon.ConfigCenterFrame
 				local state = config and config._LibSettingsDesignerState
 				if state and state.RenderContent then state:RenderContent() end
@@ -170,8 +170,14 @@ local function renderTable(parent)
 		line:SetScript("OnEnter", function(owner)
 			if not GameTooltip then return end
 			GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
-			if row.id then GameTooltip:SetSpellByID(row.id) else GameTooltip:AddLine(row.label, 1, 1, 1) end
-			if row.custom then Reminder:AddCustomBuffTooltipLines(GameTooltip, row.id, class) end
+			if row.itemId then
+				GameTooltip:SetItemByID(row.itemId)
+			elseif row.id then
+				GameTooltip:SetSpellByID(row.id)
+			else
+				GameTooltip:AddLine(row.label, 1, 1, 1)
+			end
+			if row.custom then Reminder:AddCustomBuffTooltipLines(GameTooltip, row.itemId or row.id, class, row.itemId ~= nil) end
 			GameTooltip:Show()
 		end)
 		line:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
@@ -194,7 +200,7 @@ local function renderTable(parent)
 			combatCheck:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
 			handle.combatChecks[#handle.combatChecks + 1] = { widget = combatCheck, row = row }
 		end
-		if showOutOfCombat and not row.trackerKey then
+		if showOutOfCombat and not row.trackerKey and not row.itemId then
 			local outOfCombatCheck = frame("CheckButton", line)
 			outOfCombatCheck:SetSize(24, 24)
 			outOfCombatCheck:SetPoint("RIGHT", line, "RIGHT", outOfCombatRight, 0)
@@ -319,7 +325,7 @@ function Reminder:OpenCustomBuffPopup(class)
 	if not popup then
 		popup = CreateFrame("Frame", "EQOLCustomBuffReminderPopup", UIParent, "BackdropTemplate")
 		self.customBuffPopup = popup
-		popup:SetSize(540, 410)
+		popup:SetSize(540, 440)
 		popup:SetPoint("CENTER")
 		popup:SetFrameStrata("FULLSCREEN_DIALOG")
 		popup:SetClampedToScreen(true)
@@ -341,11 +347,47 @@ function Reminder:OpenCustomBuffPopup(class)
 			return result
 		end
 		popup.title = label("", -22, "GameFontNormalLarge")
-		local guide = label(L["ClassBuffReminderCustomGuide"], -58)
-		guide:SetHeight(90)
+		local function radio(name, text, x, isItem)
+			local option = CreateFrame("Button", "$parent" .. name, popup, "BackdropTemplate")
+			option:SetSize(158, 36)
+			option:SetPoint("TOPLEFT", popup, "TOPLEFT", x, -55)
+			option:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+			local highlight = option:CreateTexture(nil, "HIGHLIGHT")
+			highlight:SetAllPoints()
+			highlight:SetColorTexture(1, 1, 1, 0.08)
+			local button = CreateFrame("CheckButton", "$parentRadio", option, "UIRadioButtonTemplate")
+			button:SetPoint("LEFT", option, "LEFT", 12, 0)
+			button.text:SetText(text)
+			button.option = option
+			local function selectOption()
+				if popup.actionType ~= isItem then popup:SetActionType(isItem) end
+				button:SetChecked(true)
+				popup.spell:SetFocus()
+			end
+			option:SetScript("OnClick", selectOption)
+			button:SetScript("OnClick", selectOption)
+			return button
+		end
+		local function setSelected(button, selected)
+			button:SetChecked(selected)
+			if selected then
+				button.option:SetBackdropColor(0.22, 0.16, 0.07, 1)
+				button.option:SetBackdropBorderColor(0.84, 0.64, 0.25, 1)
+				button.text:SetFontObject(GameFontNormalLarge)
+			else
+				button.option:SetBackdropColor(0.08, 0.095, 0.11, 1)
+				button.option:SetBackdropBorderColor(0.31, 0.36, 0.42, 1)
+				button.text:SetFontObject(GameFontHighlightLarge)
+			end
+		end
+		popup.spellRadio = radio("Spell", L["Spell"], 24, false)
+		popup.itemRadio = radio("Item", L["Item"], 190, true)
+		popup.weaponRadio = radio("Weapon", L["ClassBuffReminderWeaponBuff"], 356, "weapon")
+		local guide = label("", -104)
+		guide:SetHeight(74)
 		guide:SetJustifyV("TOP")
-		label("1. " .. L["ClassBuffReminderCustomSpells"] .. " *", -154, "GameFontNormal")
-		label("2. " .. L["ClassBuffReminderCustomAuras"], -224, "GameFontNormal")
+		local actionLabel = label("", -184, "GameFontNormal")
+		local auraLabel = label("", -254, "GameFontNormal")
 		local function input(y, numeric)
 			local edit = CreateFrame("EditBox", nil, popup, "InputBoxTemplate")
 			edit:SetSize(480, 28)
@@ -355,12 +397,64 @@ function Reminder:OpenCustomBuffPopup(class)
 			edit:SetScript("OnEscapePressed", function() popup:Hide() end)
 			return edit
 		end
-		popup.spell = input(-180, true)
-		popup.auras = input(-250, false)
-		local hint = label(L["ClassBuffReminderCustomAurasDesc"], -286)
+		popup.spell = input(-210, true)
+		popup.auras = input(-280, false)
+		local hint = label(L["ClassBuffReminderCustomAurasDesc"], -316)
 		hint:SetHeight(42)
 		hint:SetJustifyV("TOP")
-		popup.error = label("", -334)
+		popup.slotButtons = {}
+		function popup:SetWeaponSlots(definition)
+			self.weaponSlots = {}
+			for slot, button in pairs(self.slotButtons) do
+				local selected = Reminder:CustomWeaponSlotSelected(definition, slot)
+				self.weaponSlots[slot] = selected or nil
+				button:SetChecked(selected)
+			end
+		end
+		for slot = 16, 18 do
+			if Reminder:SupportsCustomWeaponSlot(slot) then
+				local button = CreateFrame("CheckButton", nil, popup, "UICheckButtonTemplate")
+				button:SetPoint("TOPLEFT", popup, "TOPLEFT", 24 + (slot - 16) * 166, -324)
+				button.Text:SetText(Reminder:GetCustomWeaponSlotLabel(slot))
+				button:SetScript("OnClick", function()
+					popup.weaponSlots[slot] = button:GetChecked() or nil
+					popup:UpdateSaveButton()
+				end)
+				popup.slotButtons[slot] = button
+			end
+		end
+		local presets = Reminder.foreverBuffs and Reminder.foreverBuffs.customWeaponEnchants
+		local picker
+		if presets then
+			picker = CreateFrame("DropdownButton", nil, popup, "WowStyle1DropdownTemplate")
+			picker:SetPoint("TOPLEFT", popup, "TOPLEFT", 24, -145)
+			picker:SetWidth(492)
+			picker:SetDefaultText(L["ClassBuffReminderWeaponBuff"])
+			picker:SetupMenu(function(_, root)
+				root:SetScrollMode(320)
+				local options = {}
+				for id, preset in pairs(presets) do
+					local name = C_Item.GetItemNameByID(id) or preset.name
+					options[#options + 1] = { id = id, name = name }
+				end
+				table.sort(options, function(a, b)
+					if a.name == b.name then return a.id < b.id end
+					return a.name < b.name
+				end)
+				for _, option in ipairs(options) do
+					local id = option.id
+					local icon = Reminder.GetItemIcon(id) or 134400
+					local label = ("|T%s:16:16|t %s (%d)"):format(icon, option.name, id)
+					local button = root:CreateButton(label, function()
+						popup.spell:SetText(tostring(id))
+						popup:LoadAction(id)
+						popup:UpdateSaveButton()
+					end)
+					button:SetTooltip(function(tooltip) tooltip:SetItemByID(id) end)
+				end
+			end)
+		end
+		popup.error = label("", -364)
 		popup.error:SetTextColor(1, 0.3, 0.3)
 		popup.error:SetHeight(30)
 		local close = CreateFrame("Button", nil, popup, "UIPanelCloseButton")
@@ -372,11 +466,11 @@ function Reminder:OpenCustomBuffPopup(class)
 		popup.save:SetText(L["ClassBuffReminderCustomAdd"])
 		popup.save:SetScript("OnClick", function()
 			if not Reminder:IsEnabled() then return end
-			if Reminder:SetCustomBuffDefinition(popup.class, popup.spell:GetText(), popup.auras:GetText()) then
+			if Reminder:SetCustomBuffDefinition(popup.class, popup.spell:GetText(), popup.auras:GetText(), popup.isItem, popup.actionType == "weapon" and popup.weaponSlots or nil) then
 				popup:Hide()
 				refreshCustomRows()
 			else
-				popup.error:SetText(L["ClassBuffReminderCustomSpellsInvalid"])
+				popup.error:SetText(L[popup.actionType == "weapon" and "ClassBuffReminderCustomWeaponGuide" or popup.isItem and "ClassBuffReminderCustomItemsInvalid" or "ClassBuffReminderCustomSpellsInvalid"])
 			end
 		end)
 		local cancel = CreateFrame("Button", nil, popup, "UIPanelButtonTemplate")
@@ -384,15 +478,51 @@ function Reminder:OpenCustomBuffPopup(class)
 		cancel:SetPoint("BOTTOMLEFT", popup, "BOTTOMLEFT", 24, 20)
 		cancel:SetText(_G.CANCEL)
 		cancel:SetScript("OnClick", function() popup:Hide() end)
+		function popup:UpdateSaveButton()
+			local id = tonumber(self.spell:GetText())
+			local hasSlot = self.actionType ~= "weapon" or next(self.weaponSlots) ~= nil
+			self.save:SetEnabled(Reminder:IsEnabled() and id ~= nil and id > 0 and hasSlot)
+		end
+		function popup:LoadAction(id)
+			local definition = Reminder:GetCustomBuffDefinition(self.class, id, self.isItem)
+			if self.actionType == "weapon" then
+				if definition and definition.enchantId then
+					self:SetWeaponSlots(definition)
+					self.auras:SetText(tostring(definition.enchantId))
+				else
+					local preset = presets and presets[id]
+					local enchant = preset and preset.enchantId or (id == 20744 and 2623)
+					self.auras:SetText(enchant and tostring(enchant) or "")
+				end
+			else
+				self.auras:SetText(definition and definition.auraIds and table.concat(definition.auraIds, ", ") or "")
+			end
+		end
 		popup.spell:SetScript("OnTextChanged", function(edit, userInput)
 			popup.error:SetText("")
-			local id = tonumber(edit:GetText())
-			popup.save:SetEnabled(Reminder:IsEnabled() and id ~= nil and id > 0)
-			if userInput then
-				local definition = Reminder:GetCustomBuffDefinition(popup.class, id)
-				if definition then popup.auras:SetText(table.concat(definition.auraIds, ", ")) end
-			end
+			if userInput then popup:LoadAction(tonumber(edit:GetText())) end
+			popup:UpdateSaveButton()
 		end)
+		function popup:SetActionType(actionType)
+			local weapon = actionType == "weapon"
+			local isItem = actionType == true or weapon
+			self.actionType = actionType
+			self.isItem = isItem
+			self:SetWeaponSlots({ weaponSlot = 16 })
+			if picker then picker:SetShown(weapon) end
+			for _, button in pairs(self.slotButtons) do button:SetShown(weapon) end
+			setSelected(self.weaponRadio, weapon)
+			setSelected(self.spellRadio, not isItem)
+			setSelected(self.itemRadio, actionType == true)
+			guide:SetText(L[weapon and "ClassBuffReminderCustomWeaponGuide" or isItem and "ClassBuffReminderCustomItemsGuide" or "ClassBuffReminderCustomGuide"])
+			actionLabel:SetText("1. " .. L[isItem and "ClassBuffReminderCustomItems" or "ClassBuffReminderCustomSpells"] .. " *")
+			auraLabel:SetText("2. " .. L[weapon and "Temp. EnchantID" or "ClassBuffReminderCustomAuras"] .. (isItem and " *" or ""))
+			hint:SetShown(not isItem)
+			self.spell:SetText("")
+			self.auras:SetText("")
+			self.error:SetText("")
+			self.save:SetEnabled(false)
+		end
 		popup.spell:SetScript("OnTabPressed", function() popup.auras:SetFocus() end)
 		popup.spell:SetScript("OnEnterPressed", function() popup.auras:SetFocus() end)
 		popup.auras:SetScript("OnTabPressed", function() popup.spell:SetFocus() end)
@@ -404,10 +534,7 @@ function Reminder:OpenCustomBuffPopup(class)
 	end
 	popup.class = class or self:GetClassToken()
 	popup.title:SetText(L["ClassBuffReminderCustomOpen"] .. " - " .. (options[popup.class] or popup.class))
-	popup.spell:SetText("")
-	popup.auras:SetText("")
-	popup.error:SetText("")
-	popup.save:SetEnabled(false)
+	popup:SetActionType(false)
 	popup:Show()
 	popup:Raise()
 	popup.spell:SetFocus()
@@ -418,7 +545,6 @@ app:RegisterControl(pageID, {
 	id = "ClassBuffReminderCustomAdd", type = "button",
 	label = L["ClassBuffReminderCustomOpen"],
 	buttonText = L["ClassBuffReminderCustomOpen"],
-	description = L["ClassBuffReminderCustomGuide"],
 	groupID = groupID, groupTitle = groupTitle,
 	onClick = function() Reminder:OpenCustomBuffPopup(selectedClass) end,
 	isEnabled = function() return Reminder:IsEnabled() end,

@@ -96,6 +96,7 @@ local DB_BORDER_TEXTURE = "classBuffReminderBorderTexture"
 local DB_BORDER_SIZE = "classBuffReminderBorderSize"
 local DB_BORDER_OFFSET = "classBuffReminderBorderOffset"
 local DB_BORDER_COLOR = "classBuffReminderBorderColor"
+Reminder.DB_SHOW_XY_TEXT = "classBuffReminderShowXYText"
 local DB_XY_TEXT_SIZE = "classBuffReminderXYTextSize"
 local DB_XY_TEXT_OUTLINE = "classBuffReminderXYTextOutline"
 local DB_XY_TEXT_COLOR = "classBuffReminderXYTextColor"
@@ -366,6 +367,7 @@ Reminder.defaults = Reminder.defaults
 		borderSize = 1,
 		borderOffset = 0,
 		borderColor = { r = 1, g = 1, b = 1, a = 1 },
+		showXYText = true,
 		xyTextSize = 13,
 		xyTextOutline = TEXT_OUTLINE_OUTLINE,
 		xyTextColor = { r = 1, g = 1, b = 1, a = 1 },
@@ -1441,21 +1443,29 @@ function Reminder:FilterDismissedInteractionEntries(entries)
 	return filtered
 end
 
-function Reminder:DecorateConsumableInteractionEntry(entry, sourceKind, candidates)
-	if type(entry) ~= "table" or type(sourceKind) ~= "string" or type(candidates) ~= "table" then return entry end
-	local selectedItemId = tonumber(self.selectedInteractionItems[sourceKind])
-	local selected
+function Reminder:GetSelectedConsumableItem(sourceKind, candidates)
+	local selectedItemId
+	if sourceKind == "FOREVER_FOOD" and addon.db then
+		selectedItemId = tonumber(addon.db.classBuffReminderFoodItem)
+	else
+		selectedItemId = tonumber(self.selectedInteractionItems[sourceKind])
+	end
+	local firstItemId
 	for i = 1, #candidates do
 		local candidate = candidates[i]
 		local itemId = tonumber(candidate and candidate.id)
-		if itemId and itemId > 0 and (not selected or itemId == selectedItemId) then
-			selected = candidate
-			if itemId == selectedItemId then break end
+		if itemId and itemId > 0 then
+			if itemId == selectedItemId then return itemId end
+			firstItemId = firstItemId or itemId
 		end
 	end
-	if not selected then return entry end
+	return firstItemId
+end
 
-	local itemId = tonumber(selected.id)
+function Reminder:DecorateConsumableInteractionEntry(entry, sourceKind, candidates)
+	if type(entry) ~= "table" or type(sourceKind) ~= "string" or type(candidates) ~= "table" then return entry end
+	local itemId = self:GetSelectedConsumableItem(sourceKind, candidates)
+	if not itemId then return entry end
 	entry.itemId = itemId
 	entry.candidates = candidates
 	entry.sourceKind = sourceKind
@@ -1470,7 +1480,11 @@ end
 function Reminder:SelectInteractionItem(sourceKind, itemId)
 	itemId = tonumber(itemId)
 	if type(sourceKind) ~= "string" or sourceKind == "" or not itemId or itemId <= 0 then return end
-	self.selectedInteractionItems[sourceKind] = itemId
+	if sourceKind == "FOREVER_FOOD" and addon.db then
+		addon.db.classBuffReminderFoodItem = itemId
+	else
+		self.selectedInteractionItems[sourceKind] = itemId
+	end
 	self:RequestUpdate(true)
 end
 
@@ -1810,6 +1824,7 @@ function Reminder:OpenInteractionMenu(owner, entry)
 					if type(itemName) ~= "string" or itemName == "" then itemName = "item:" .. tostring(itemId) end
 					rootDescription:CreateRadio(itemName, function()
 						if tonumber(entry.selectionWeaponSlot) then return Reminder:GetSelectedWeaponBuffItem(entry.selectionWeaponSlot, candidates) == itemId end
+						if entry.sourceKind == "FOREVER_FOOD" then return Reminder:GetSelectedConsumableItem(entry.sourceKind, candidates) == itemId end
 						return tonumber(Reminder.selectedInteractionItems[entry.sourceKind] or entry.itemId) == itemId
 					end, function()
 						if tonumber(entry.selectionWeaponSlot) then
@@ -1878,7 +1893,9 @@ function Reminder:ShowInteractionTooltip(owner)
 	if type(entry) ~= "table" or not GameTooltip then return end
 	GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
 	GameTooltip:AddLine(entry.label or (L["Class Buff Reminder"] or "Class Buff Reminder"), 1, 0.82, 0)
-	if entry.customBuff and self.AddCustomBuffTooltipLines then self:AddCustomBuffTooltipLines(GameTooltip, entry.spellId) end
+	if entry.customBuff and self.AddCustomBuffTooltipLines then
+		self:AddCustomBuffTooltipLines(GameTooltip, entry.itemId or entry.spellId, nil, entry.itemId ~= nil)
+	end
 	if entry.itemId or normalizeSpellId(entry.actionSpellId) or tonumber(entry.actionPetSlot) or type(entry.actionCallback) == "function" then
 		GameTooltip:AddLine(entry.actionTooltip or L["ClassBuffReminderInteractionApply"] or "Left-click to apply.", 0.4, 0.8, 0.4, true)
 	end
@@ -4311,6 +4328,8 @@ function Reminder:GetBorderSize() return normalizeBorderSize(getValue(DB_BORDER_
 function Reminder:GetBorderOffset() return normalizeBorderOffset(getValue(DB_BORDER_OFFSET, defaults.borderOffset)) end
 function Reminder:GetBorderColor() return normalizeColor(getValue(DB_BORDER_COLOR, defaults.borderColor), defaults.borderColor) end
 
+function Reminder:ShouldShowIconCountText() return getValue(Reminder.DB_SHOW_XY_TEXT, defaults.showXYText) == true end
+
 function Reminder:GetIconCountTextStyle()
 	local size = clamp(getValue(DB_XY_TEXT_SIZE, defaults.xyTextSize), 8, 64, defaults.xyTextSize)
 	local outline = normalizeTextOutline(getValue(DB_XY_TEXT_OUTLINE, defaults.xyTextOutline))
@@ -5995,6 +6014,7 @@ function Reminder:RenderSelfMissingIcons(missingEntries)
 	local scale = clamp(getValue(DB_SCALE, defaults.scale), 0.5, 2, defaults.scale)
 	local iconSize = clamp(getValue(DB_ICON_SIZE, defaults.iconSize), 14, 120, defaults.iconSize)
 	local iconGap = clamp(getValue(DB_ICON_GAP, defaults.iconGap), 0, 40, defaults.iconGap)
+	local showXYText = self:ShouldShowIconCountText()
 	local xyTextSize, xyTextOutline, xyTextR, xyTextG, xyTextB, xyTextA, xyOffsetX, xyOffsetY = self:GetIconCountTextStyle()
 	local scaledIconSize, scaledIconGap = self:GetIconRowDimensions(frame, iconSize, iconGap, scale)
 	local scaledXYTextSize = math.max(8, math.floor((xyTextSize * scale) + 0.5))
@@ -6081,7 +6101,9 @@ function Reminder:RenderSelfMissingIcons(missingEntries)
 			local ct = type(entry) == "table" and tonumber(entry.countTotal) or nil
 			local shortText = type(entry) == "table" and entry.shortText or nil
 			if iconFrame.countText.SetWidth then iconFrame.countText:SetWidth(scaledIconSize + 2) end
-			if cm and ct and ct > 0 then
+			if not showXYText then
+				iconFrame.countText:SetText("")
+			elseif cm and ct and ct > 0 then
 				cm = math.max(0, math.floor(cm + 0.5))
 				ct = math.max(0, math.floor(ct + 0.5))
 				iconFrame.countText:SetText(string.format("%d/%d", cm, ct))
@@ -6267,6 +6289,7 @@ function Reminder:ApplyVisualSettings()
 	local displayMode = normalizeDisplayMode(getValue(DB_DISPLAY_MODE, defaults.displayMode))
 	local growthDirection = normalizeGrowthDirection(getValue(DB_GROWTH_DIRECTION, defaults.growthDirection))
 	local iconShape = self:GetIconShape()
+	local showXYText = self:ShouldShowIconCountText()
 	local xyTextSize, xyTextOutline, xyTextR, xyTextG, xyTextB, xyTextA, xyOffsetX, xyOffsetY = self:GetIconCountTextStyle()
 	local borderEnabled = self:IsBorderEnabled()
 	local borderTexture = self:GetBorderTextureKey()
@@ -6291,6 +6314,7 @@ function Reminder:ApplyVisualSettings()
 		tostring(growthDirection),
 		tostring(iconShape),
 		tostring(self:GetIconZoom()),
+		tostring(showXYText),
 		tostring(xyTextSize),
 		tostring(xyTextOutline),
 		tostring(xyTextR),
@@ -6366,7 +6390,7 @@ function Reminder:ApplyVisualSettings()
 		if frame.bg then frame.bg:Hide() end
 		frame.nameText:Hide()
 		frame.countText:Hide()
-		if frame.iconCountText then frame.iconCountText:Show() end
+		if frame.iconCountText then frame.iconCountText:SetShown(showXYText) end
 		frame.iconHolder:SetPoint("CENTER", frame, "CENTER", 0, 0)
 		frame:SetSize(scaledIconSize + 2, scaledIconSize + 2)
 	else
@@ -6682,7 +6706,7 @@ function Reminder:Render(provider, missing, total, supplementalEntries, effectiv
 		self:ConfigureInteractionButton(frame.iconHolder, fullModeEntry)
 	end
 
-	self:UpdateReminderIconPresentation()
+	self:UpdateReminderIconPresentation(provider and provider.displaySpellId)
 	local showGlow = getValue(DB_GLOW, defaults.glow) == true and ((tonumber(effectiveMissing) or tonumber(missing) or 0) > 0)
 	self:SetGlowShown(showGlow)
 end
@@ -6983,6 +7007,7 @@ end
 
 function Reminder:HandleEvent(event, unit, updateInfo, spellId)
 	if not self:ShouldRegisterRuntimeEvents() then return end
+	if self.HandleReminderKeybindEvent and self:HandleReminderKeybindEvent(event) then return end
 	if event == "UI_SCALE_CHANGED" or event == "DISPLAY_SIZE_CHANGED" then
 		if self:GetGrowthFromCenter() then self:RequestUpdate(false, 0) end
 		return
@@ -7114,7 +7139,8 @@ function Reminder:HandleEvent(event, unit, updateInfo, spellId)
 
 	if event == "BAG_UPDATE_DELAYED" or event == "ITEM_DATA_LOAD_RESULT" then
 		if event == "ITEM_DATA_LOAD_RESULT" and not self.foreverBuffs.weaponItemIds[unit]
-			and not (self.foreverCamping.foodItemIds and self.foreverCamping.foodItemIds[unit]) then return end
+			and not (self.foreverCamping.foodItemIds and self.foreverCamping.foodItemIds[unit])
+			and not (updateInfo and self.GetCustomBuffDefinition and self:GetCustomBuffDefinition(nil, unit, true)) then return end
 		self.foreverCamping.foodCandidates = nil
 		self:InvalidateWeaponBuffCache()
 		self:InvalidateSelfProviderStatus()
@@ -7245,7 +7271,10 @@ function Reminder:RegisterEvents()
 		return
 	end
 
-	if self.eventsRegistered then return end
+	if self.eventsRegistered then
+		if self.RefreshReminderKeybindEvents then self:RefreshReminderKeybindEvents() end
+		return
+	end
 
 	self.eventFrame = self.eventFrame or CreateFrame("Frame")
 	self.eventFrame:RegisterEvent("PLAYER_LOGIN")
@@ -7306,11 +7335,14 @@ function Reminder:RegisterEvents()
 	self.eventFrame:SetScript("OnEvent", function(_, event, ...) Reminder:HandleEvent(event, ...) end)
 
 	self.eventsRegistered = true
+	if self.RefreshReminderKeybindEvents then self:RefreshReminderKeybindEvents() end
 	self:SetupPetTrackingHooks()
 	self:ScheduleInitialSoundSync()
 end
 
 function Reminder:UnregisterEvents()
+	self.reminderSpellKeybinds = nil
+	self.reminderKeybindEventsActive = nil
 	if self.partyBuffRangeTicker then self.partyBuffRangeTicker:Cancel() end
 	self.partyBuffRangeTicker = nil
 	self.partyBuffRangeChecks = nil
@@ -7990,10 +8022,33 @@ function editModeSettingsBuilders.buildLayout()
 			formatter = function(value) return tostring(math.floor((tonumber(value) or defaults.fontSize) + 0.5)) end,
 			isShown = function() return not Reminder:IsEditModeIconOnlyModeActive() end,
 		},
+	}
+end
+
+function editModeSettingsBuilders.buildIconXYText()
+	return {
+		{
+			name = L["ClassBuffReminderXYCount"],
+			kind = SettingType.Collapsible,
+			id = "iconXYText",
+			defaultCollapsed = true,
+			isShown = function() return Reminder:IsEditModeIconOnlyModeActive() end,
+			navigationHint = function() return DISPLAY_MODE, nil, "anchorSize" end,
+		},
+		{
+			name = L["ClassBuffReminderShowXYText"],
+			kind = SettingType.Checkbox,
+			parentId = "iconXYText",
+			navigationField = Reminder.DB_SHOW_XY_TEXT,
+			default = defaults.showXYText,
+			get = function() return Reminder:ShouldShowIconCountText() end,
+			set = function(_, value) editModeSetBool(Reminder.DB_SHOW_XY_TEXT, value) end,
+			isShown = function() return Reminder:IsEditModeIconOnlyModeActive() end,
+		},
 		{
 			name = L["ClassBuffReminderXYTextSize"] or "X/Y text size",
 			kind = SettingType.Slider,
-			parentId = "anchorSize",
+			parentId = "iconXYText",
 			default = defaults.xyTextSize,
 			minValue = 8,
 			maxValue = 64,
@@ -8006,7 +8061,7 @@ function editModeSettingsBuilders.buildLayout()
 		{
 			name = L["ClassBuffReminderXYTextOutline"] or "X/Y text outline",
 			kind = SettingType.Dropdown,
-			parentId = "anchorSize",
+			parentId = "iconXYText",
 			height = 120,
 			get = function() return normalizeTextOutline(getValue(DB_XY_TEXT_OUTLINE, defaults.xyTextOutline)) end,
 			set = function(_, value)
@@ -8057,7 +8112,7 @@ function editModeSettingsBuilders.buildLayout()
 		{
 			name = L["ClassBuffReminderXYTextColor"] or "X/Y text color",
 			kind = SettingType.Color,
-			parentId = "anchorSize",
+			parentId = "iconXYText",
 			default = defaults.xyTextColor,
 			hasOpacity = true,
 			get = function()
@@ -8070,7 +8125,7 @@ function editModeSettingsBuilders.buildLayout()
 		{
 			name = L["ClassBuffReminderXYTextOffsetX"] or "X/Y offset X",
 			kind = SettingType.Slider,
-			parentId = "anchorSize",
+			parentId = "iconXYText",
 			default = defaults.xyTextOffsetX,
 			minValue = -60,
 			maxValue = 60,
@@ -8083,7 +8138,7 @@ function editModeSettingsBuilders.buildLayout()
 		{
 			name = L["ClassBuffReminderXYTextOffsetY"] or "X/Y offset Y",
 			kind = SettingType.Slider,
-			parentId = "anchorSize",
+			parentId = "iconXYText",
 			default = defaults.xyTextOffsetY,
 			minValue = -60,
 			maxValue = 60,
@@ -8192,6 +8247,7 @@ function editModeSettingsBuilders.buildAll()
 	editModeSettingsBuilders.appendEntries(settings, editModeSettingsBuilders.buildClassBuffs())
 	if Reminder.BuildExpirationCategoryEditModeSettings then editModeSettingsBuilders.appendEntries(settings, Reminder:BuildExpirationCategoryEditModeSettings(SettingType)) end
 	editModeSettingsBuilders.appendEntries(settings, Reminder:BuildIconPresentationEditModeSettings(SettingType))
+	editModeSettingsBuilders.appendEntries(settings, editModeSettingsBuilders.buildIconXYText())
 	editModeSettingsBuilders.appendEntries(settings, editModeSettingsBuilders.buildFilters())
 	editModeSettingsBuilders.appendEntries(settings, editModeSettingsBuilders.buildSound())
 	editModeSettingsBuilders.appendEntries(settings, editModeSettingsBuilders.buildLayout())

@@ -459,7 +459,6 @@ local gameplayStandalonePageOrderByStableID = {
 local generalItemsRewardsPageID = "general.items-rewards"
 local generalItemsRewardsSectionOrderByStableID = {
 	ContainerActions = 10,
-	BagsModule = 5,
 	Loot = 20,
 	GearUpgrades = 30,
 }
@@ -646,6 +645,7 @@ local function getConfigCenterSlashCommandContent()
 			title = L["General"] or "General",
 			entries = {
 				{ type = "command", commands = { "/eqol" }, desc = L["rootSlashCommandSettingsDesc"] or "Open the EnhanceQoL settings." },
+				{ type = "command", commands = { "/eqol guide" }, desc = L["FirstStepsTitle"] },
 				{ type = "command", commands = { "/rl" }, desc = L["rootSlashCommandReloadUIDesc"] or "Reload UI.", note = settingEnabledNote },
 			},
 		},

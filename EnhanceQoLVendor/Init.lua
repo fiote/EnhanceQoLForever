@@ -52,6 +52,12 @@ function addon.Vendor.functions.InitDB()
 	init("vendorCraftShopperEnable", false)
 	init("vendorCraftShopperIncludeWarbandBank", false)
 	init("vendorCraftShopperReagentQuality", "highest")
+	if addon.variables.isForever and not addon.variables.isTBC then
+		init("vendorAuctionSales", false)
+		init("vendorAuctionPriceTooltip", true)
+		init("vendorAuctionHistoryTooltip", false)
+		init("vendorAuctionDateFormat", "auto")
+	end
 	local legacyIgnoreEquipmentSets = addon.db["vendorIgnoreEquipmentSets"]
 
 	for key, value in pairs(addon.Vendor.variables.tabNames) do

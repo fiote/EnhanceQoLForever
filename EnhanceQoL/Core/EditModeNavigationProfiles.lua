@@ -177,7 +177,7 @@ local function classBuffProfile()
 		category("tracking", L["settingsCategoryTracking"], { "classBuffs", "filters", "pets" }),
 		category("consumables", L["categoryConsumables"], { "flasks", "food", "runes", "weaponBuffs", "poisons" }),
 		category("warnings", L["ClassBuffReminderWarningTimes"], { "expirationCategories" }),
-		category("iconPresentation", L["ClassBuffReminderIconTextGlow"], { "iconPresentation" }),
+		category("iconPresentation", L["ClassBuffReminderIconTextGlow"], { "iconTime", "iconStacks", "iconXYText", "iconKeybinds", "iconExpiryGlow" }),
 		category("frame", L["Frame"], { "classBuffReminderAnchor", "anchorSize", "border" }),
 		category("sound", _G.SOUND or L["ProfileImportProtectionSound"], { "sound" }),
 	}

@@ -22,7 +22,6 @@ TradeMailLog.pendingSend = TradeMailLog.pendingSend or nil
 TradeMailLog.lastOpenIndex = TradeMailLog.lastOpenIndex or nil
 TradeMailLog.lastOpenSignature = TradeMailLog.lastOpenSignature or nil
 TradeMailLog.seq = TradeMailLog.seq or 0
-TradeMailLog.mailHooksReady = TradeMailLog.mailHooksReady or false
 TradeMailLog.itemTemplatesReady = TradeMailLog.itemTemplatesReady or false
 
 local function now() return (GetServerTime and GetServerTime()) or time() end
@@ -620,6 +619,22 @@ function TradeMailLog:LogMail(data)
 	})
 end
 
+local function receivedMail(sender, subject, body, money, cod, items)
+	return {
+		kind = "mail",
+		direction = "received",
+		sender = sender,
+		receiver = getPlayerDisplayName(),
+		subject = subject,
+		body = body,
+		money = money or 0,
+		cod = cod or 0,
+		items = items,
+		zone = GetRealZoneText and GetRealZoneText() or (GetZoneText and GetZoneText()) or "",
+		time = now(),
+	}
+end
+
 function TradeMailLog:LogInboxMail(index)
 	if not canLog("MAIL") then return end
 	if not index or not GetInboxHeaderInfo then return end
@@ -661,38 +676,56 @@ function TradeMailLog:LogInboxMail(index)
 		end
 	end
 
-	self:LogMail({
-		kind = "mail",
-		direction = "received",
-		sender = sender,
-		receiver = getPlayerDisplayName(),
-		subject = subject,
-		body = bodyText,
-		money = money or 0,
-		cod = cod or 0,
-		items = items,
-		zone = GetRealZoneText and GetRealZoneText() or (GetZoneText and GetZoneText()) or "",
-		time = now(),
-	})
+	self.lastOpenGold = money and money > 0 and GetInboxNumItems and {
+		index = index, count = GetInboxNumItems(), sender = sender, subject = subject, money = money,
+	} or nil
+	self:LogMail(receivedMail(sender, subject, bodyText, money, cod, items))
+end
+
+function TradeMailLog:CaptureOpenAllGold(index)
+	self.pendingOpenAllGold = nil
+	if not canLog("MAIL") or not index or not GetInboxNumItems or not GetInboxHeaderInfo then return end
+	local count = GetInboxNumItems()
+	if index > count then return end
+	local _, _, sender, subject, money, cod, _, _, _, _, _, _, isGM = GetInboxHeaderInfo(index)
+	if isGM or (cod and cod > 0) or not money or money <= 0 then return end
+	if not sender or sender == "" then sender = UNKNOWN or "Unknown" end
+	subject = subject or ""
+	local opened = self.lastOpenGold
+	local alreadyLogged = opened and opened.index == index and opened.count == count
+		and opened.sender == sender and opened.subject == subject and opened.money == money
+	self.pendingOpenAllGold = {
+		sender = sender, subject = subject, money = money, alreadyLogged = alreadyLogged,
+	}
+end
+
+function TradeMailLog:ConfirmOpenAllGold()
+	local pending = self.pendingOpenAllGold
+	if not pending then return end
+	self.pendingOpenAllGold = nil
+	self.lastOpenGold = nil
+	self.lastOpenIndex, self.lastOpenSignature = nil, nil
+	if not pending.alreadyLogged and canLog("MAIL") then
+		self:LogMail(receivedMail(pending.sender, pending.subject, "", pending.money, 0, {}))
+	end
 end
 
 function TradeMailLog:EnsureMailHooks()
-	if self.mailHooksReady then return end
-	local sendHooked = self.sendHooked
-	local inboxHooked = self.inboxHooked
-
-	if not sendHooked and type(SendMailFrame_SendMail) == "function" then
+	if not self.sendHooked and type(SendMailFrame_SendMail) == "function" then
 		hooksecurefunc("SendMailFrame_SendMail", function() TradeMailLog:CaptureSendMail() end)
 		self.sendHooked = true
-		sendHooked = true
 	end
-	if not inboxHooked and type(InboxFrame_OnClick) == "function" then
+	if not self.inboxHooked and type(InboxFrame_OnClick) == "function" then
 		hooksecurefunc("InboxFrame_OnClick", function(_, index) TradeMailLog:LogInboxMail(index) end)
 		self.inboxHooked = true
-		inboxHooked = true
 	end
 
-	self.mailHooksReady = sendHooked and inboxHooked
+	local openAll = _G.OpenAllMail
+	if self.openAllHooked ~= openAll and openAll and type(openAll.AdvanceToNextItem) == "function" then
+		-- The next index is selected before Blizzard issues the asynchronous money request.
+		hooksecurefunc(openAll, "AdvanceToNextItem", function(button) TradeMailLog:CaptureOpenAllGold(button.mailIndex) end)
+		self.openAllHooked = openAll
+	end
 end
 
 function TradeMailLog:EnsureTradePreview()
@@ -1068,8 +1101,18 @@ function TradeMailLog:OnEvent(event, ...)
 		self.pendingSend = nil
 		return
 	end
+	if event == "MAIL_SUCCESS" then
+		local itemID = ...
+		if not itemID or itemID == 0 then self:ConfirmOpenAllGold() end
+		return
+	end
 	if event == "MAIL_FAILED" or event == "MAIL_CLOSED" then
 		self.pendingSend = nil
+		self.pendingOpenAllGold = nil
+		if event == "MAIL_CLOSED" then
+			self.lastOpenGold = nil
+			self.lastOpenIndex, self.lastOpenSignature = nil, nil
+		end
 		return
 	end
 
@@ -1111,6 +1154,7 @@ else
 end
 TradeMailLog.frame:RegisterEvent("ADDON_LOADED")
 TradeMailLog.frame:RegisterEvent("MAIL_SHOW")
+TradeMailLog.frame:RegisterEvent("MAIL_SUCCESS")
 TradeMailLog.frame:RegisterEvent("MAIL_SEND_SUCCESS")
 TradeMailLog.frame:RegisterEvent("MAIL_FAILED")
 TradeMailLog.frame:RegisterEvent("MAIL_CLOSED")

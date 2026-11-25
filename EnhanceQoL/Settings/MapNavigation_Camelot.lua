@@ -4686,31 +4686,62 @@ local function ensureSquareMinimapStatsTicker()
 	state.ticker = C_Timer.NewTicker(desiredInterval, function() updateSquareMinimapStatsTicker(desiredInterval) end)
 end
 
--- Keep the day/night dial configurable for both minimap shapes.
+-- Only override the dial's position or visibility when configured.
 do
 	local state = {}
+
+	local function capturePoints(dial)
+		local points = {}
+		for i = 1, dial:GetNumPoints() do points[i] = { dial:GetPoint(i) } end
+		return points
+	end
+
 	function addon.functions.ApplySquareMinimapDial()
 		if state.updating or not addon.db then return end
 		local dial = MinimapCluster and MinimapCluster.DielFrame
-		if not dial or not Minimap then return end
+		if not dial then return end
+		local anchor = addon.db.squareMinimapDialAnchor
+		if not squareMinimapStatsAnchorOptions[anchor] then anchor = "TOPRIGHT" end
+		local x = tonumber(addon.db.squareMinimapDialOffsetX) or 0
+		local y = tonumber(addon.db.squareMinimapDialOffsetY) or 0
+		local reposition = Minimap and (anchor ~= "TOPRIGHT" or x ~= 0 or y ~= 0)
+		local hide = addon.db.squareMinimapDialHidden == true
 		if state.frame ~= dial then
-			state.frame = dial
-			hooksecurefunc(dial, "SetPoint", function()
+			if not reposition and not hide then return end
+			state = { frame = dial }
+			local function onPositionChanged()
+				if state.frame ~= dial or state.updating or not state.originalPoints then return end
+				state.originalPoints = capturePoints(dial)
 				addon.functions.ApplySquareMinimapDial()
-			end)
-			hooksecurefunc(dial, "SetAllPoints", function()
-				addon.functions.ApplySquareMinimapDial()
-			end)
+			end
+			hooksecurefunc(dial, "SetPoint", onPositionChanged)
+			hooksecurefunc(dial, "SetAllPoints", onPositionChanged)
 			dial:HookScript("OnShow", function()
-				if addon.db and addon.db.squareMinimapDialHidden then dial:Hide() end
+				if state.frame == dial and state.hidden then dial:Hide() end
 			end)
 		end
+
 		state.updating = true
-		local anchor = addon.db.squareMinimapDialAnchor or "TOPRIGHT"
-		if not squareMinimapStatsAnchorOptions[anchor] then anchor = "TOPRIGHT" end
-		dial:ClearAllPoints()
-		dial:SetPoint(anchor, Minimap, anchor, tonumber(addon.db.squareMinimapDialOffsetX) or 0, tonumber(addon.db.squareMinimapDialOffsetY) or 0)
-		dial:SetShown(not addon.db.squareMinimapDialHidden)
+		if reposition then
+			state.originalPoints = state.originalPoints or capturePoints(dial)
+			dial:ClearAllPoints()
+			dial:SetPoint(anchor, Minimap, anchor, x, y)
+		elseif state.originalPoints then
+			dial:ClearAllPoints()
+			for _, point in ipairs(state.originalPoints) do dial:SetPoint(unpack(point, 1, 5)) end
+			state.originalPoints = nil
+		end
+		if hide then
+			if not state.hidden then
+				state.wasShown = dial:IsShown()
+				state.hidden = true
+			end
+			if dial:IsShown() then dial:Hide() end
+		elseif state.hidden then
+			state.hidden = nil
+			dial:SetShown(state.wasShown)
+			state.wasShown = nil
+		end
 		state.updating = false
 	end
 	local events = CreateFrame("Frame")

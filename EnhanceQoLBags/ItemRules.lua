@@ -103,6 +103,7 @@ function M.Connect(service)
 	if not M.subscribed and service.Subscribe then
 		M.subscribed = true
 		service.Subscribe(function(payload)
+			if payload.dataAvailable == false then return end
 			M.requested, M.requestedCount, M.snapshots = {}, 0, {}
 			M.Notify(payload)
 		end)
@@ -134,6 +135,19 @@ function M.CaptureContext(context)
 	if context.bagID ~= nil and context.slotID ~= nil then M.snapshots[tostring(context.bagID) .. ":" .. tostring(context.slotID)] = copy(context) end
 end
 function M.CopyContext(context) return copy(context) end
+local function requestMissingFacts(service, item, fields, options)
+	if not service or not service.Request then return end
+	local requestKey = tostring(item.link or item.itemID) .. ":" .. tostring(item.bagID) .. ":" .. tostring(item.slotID) .. ":" .. table.concat(fields, ",")
+	if M.requested[requestKey] then return end
+	if M.requestedCount >= 2048 then M.requested, M.requestedCount = {}, 0 end
+	M.requested[requestKey] = true
+	M.requestedCount = M.requestedCount + 1
+	service.Request(item, fields, options)
+end
+function M.RequestMetadata(itemID)
+	if not itemID then return end
+	requestMissingFacts(engine(), { itemID = itemID }, { "name" }, addon.GetCategoryFilterContext())
+end
 function M.Evaluate(compiled, context)
 	local service = engine()
 	if not service or not compiled then return nil end
@@ -147,13 +161,7 @@ function M.Evaluate(compiled, context)
 	if options.offline then item.bagID, item.slotID = nil, nil end
 	local facts, statuses = service.Get(item, compiled.fields, options)
 	local result = service.Evaluate(compiled, facts, statuses)
-	local requestKey = tostring(item.link or item.itemID) .. ":" .. tostring(item.bagID) .. ":" .. tostring(item.slotID) .. ":" .. table.concat(compiled.fields or {}, ",")
-	if result == nil and service.Request and not M.requested[requestKey] then
-		if M.requestedCount >= 2048 then M.requested, M.requestedCount = {}, 0 end
-		M.requested[requestKey] = true
-		M.requestedCount = M.requestedCount + 1
-		service.Request(item, compiled.fields, options)
-	end
+	if result == nil then requestMissingFacts(service, item, compiled.fields or {}, options) end
 	return result
 end
 function M.Install(findCategory, compileLegacy, dirty, categories)

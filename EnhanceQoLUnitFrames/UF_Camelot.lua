@@ -934,6 +934,7 @@ end
 function UFProfileManager._ensureUFProfilePayload(profile)
 	if type(profile) ~= "table" then profile = {} end
 	profile.ufFrames = type(profile.ufFrames) == "table" and profile.ufFrames or {}
+	profile.legacyStatusGapDefault = profile.legacyStatusGapDefault ~= false
 	profile.ufGroupFrames = type(profile.ufGroupFrames) == "table" and profile.ufGroupFrames or {}
 	profile.ufUseCustomClassColors = profile.ufUseCustomClassColors == true
 	profile.ufUseCustomPowerColors = profile.ufUseCustomPowerColors == true
@@ -944,7 +945,11 @@ function UFProfileManager._ensureUFProfilePayload(profile)
 end
 
 function UFProfileManager._buildLegacyUFProfile()
+	local db = addon.db
+	local hasLegacyFrames = db and ((type(db.ufFrames) == "table" and next(db.ufFrames) ~= nil)
+		or (type(db.ufGroupFrames) == "table" and next(db.ufGroupFrames) ~= nil))
 	return UFProfileManager._ensureUFProfilePayload({
+		legacyStatusGapDefault = hasLegacyFrames == true,
 		ufFrames = UFProfileManager._copyProfileValue(addon.db and addon.db.ufFrames) or {},
 		ufGroupFrames = UFProfileManager._copyProfileValue(addon.db and addon.db.ufGroupFrames) or {},
 		ufUseCustomClassColors = addon.db and addon.db.ufUseCustomClassColors == true,
@@ -975,6 +980,7 @@ end
 function UFProfileManager._isUFProfilePayloadNormalized(profile)
 	return type(profile) == "table"
 		and type(profile.ufFrames) == "table"
+		and type(profile.legacyStatusGapDefault) == "boolean"
 		and type(profile.ufGroupFrames) == "table"
 		and (profile.ufUseCustomClassColors == true or profile.ufUseCustomClassColors == false)
 		and (profile.ufUseCustomPowerColors == true or profile.ufUseCustomPowerColors == false)
@@ -1497,7 +1503,7 @@ function UFProfileManager.Create(name)
 	name = UFProfileManager._trimProfileName(name)
 	if not name then return false, "INVALID_NAME" end
 	if addon.db.ufProfiles[name] then return false, "EXISTS" end
-	addon.db.ufProfiles[name] = UFProfileManager._ensureUFProfilePayload({})
+	addon.db.ufProfiles[name] = UFProfileManager._ensureUFProfilePayload({ legacyStatusGapDefault = false })
 	UFProfileManager._markUFProfilesDirty()
 	UFProfileManager.Trace("CREATE_PROFILE", name)
 	return true
@@ -2685,8 +2691,15 @@ local function ensureDB(unit)
 			end
 		end
 	end
-	db[key] = db[key] or {}
+	if not db[key] then
+		local profiles = addon.db.ufProfiles
+		local activeName = UFProfileManager._activeProfileName
+		local profile = activeName and profiles and profiles[activeName]
+		db[key] = { legacyStatusGap = key ~= UNIT.PET and profile ~= nil and profile.ufFrames == db and profile.legacyStatusGapDefault == true }
+	end
 	local udb = db[key]
+	-- The shipped Pet Frame already uses compact coordinates.
+	if udb.legacyStatusGap == nil then udb.legacyStatusGap = key ~= UNIT.PET end
 	if addon.functions.MigrateUnitFrameLevelColorConfig then addon.functions.MigrateUnitFrameLevelColorConfig(udb) end
 	if addon.functions and addon.functions.CleanupUnitFrameClassResourceConfig then addon.functions.CleanupUnitFrameClassResourceConfig(udb) end
 	UF._defaultsMerged = UF._defaultsMerged or setmetatable({}, { __mode = "k" })
@@ -3188,6 +3201,8 @@ local function copySettings(fromUnit, toUnit, opts)
 	local keepEnabled = opts.keepEnabled ~= false
 	local anchor = keepAnchor and dest.anchor and cloneSettingValue(dest.anchor) or dest.anchor
 	local enabled = keepEnabled and dest.enabled
+	local legacyStatusGap, statusGapPositions = dest.legacyStatusGap, dest.statusGapPositions
+	local statusGapMigrated = dest.statusGapMigrated
 	local copied = false
 	if type(opts.sections) == "table" then
 		for _, sectionId in ipairs(opts.sections) do
@@ -3208,6 +3223,11 @@ local function copySettings(fromUnit, toUnit, opts)
 	end
 	if not copied then return false end
 	if keepAnchor then dest.anchor = anchor end
+	if keepAnchor or statusGapMigrated then
+		dest.legacyStatusGap = legacyStatusGap
+		dest.statusGapPositions = statusGapPositions
+		dest.statusGapMigrated = statusGapMigrated
+	end
 	if keepEnabled then dest.enabled = enabled end
 	return true
 end
@@ -3594,7 +3614,7 @@ function UF.SyncEditModeLayoutAnchors(units)
 			if anchor then
 				local def = defaultsFor(unit)
 				local showStatus = unit ~= "boss" and UF.ShouldShowStatusLayout and UF.ShouldShowStatusLayout(cfg, unit, def)
-				local statusHeightDelta = unit ~= "boss" and UF.GetStatusHeightDelta and UF.GetStatusHeightDelta(showStatus, unit) or 0
+				local statusHeightDelta = unit ~= "boss" and UF.GetStatusHeightDelta and UF.GetStatusHeightDelta(showStatus, unit, cfg) or 0
 				local relativeName = anchor.relativeTo or anchor.relativeFrame
 				local rel = resolveRelativeAnchorFrame(relativeName, RelativeAnchor.GetFrameNameForKey(unit))
 				local point = anchor.point or "CENTER"
@@ -3721,6 +3741,8 @@ function UF.ImportProfile(encoded, scopeKey)
 		if isGroupScopeKey(key) then
 			targetGroupFrames[key] = CopyTable(frameCfg)
 		else
+			local preview = UF.statusGapPreview
+			if preview and preview.unit == key and UF.ui and UF.ui.CancelLegacyStatusGapPreview then UF.ui.CancelLegacyStatusGapPreview(true) end
 			targetFrames[key] = CopyTable(frameCfg)
 		end
 		markApplied(key)
@@ -11089,28 +11111,105 @@ local function shouldShowLevel(scfg, unit)
 	return true
 end
 
-function UF.ResolveStatusHeight(cfg, def, showStatus)
+function UF.GetLegacyStatusGapPreview(cfg)
+	local preview = UF.statusGapPreview
+	if preview and preview.positions and preview.cfg == cfg and preview.db == addon.db and preview.frames == addon.db.ufFrames then return preview end
+end
+
+function UF.GetStatusGapPosition(cfg, unit)
+	local preview = UF.GetLegacyStatusGapPreview(cfg)
+	local positions = preview and preview.positions or cfg and cfg.statusGapPositions
+	return positions and (positions.frame or positions[unit])
+end
+
+function UF.ResolveStatusHeight(cfg, def, showStatus, unit)
+	local position = UF.GetStatusGapPosition(cfg, unit)
+	if position then return position.height end
 	if not showStatus then return 0 end
 	return UF.STATUS_PHYSICAL_HEIGHT
 end
 
-function UF.ResolveStatusLayoutHeight(showStatus, unit)
+function UF.ResolveStatusLayoutHeight(showStatus, unit, cfg)
 	if not showStatus then return 0 end
-	if unit == "pet" then return UF.STATUS_PHYSICAL_HEIGHT end
-	return UF.STATUS_LAYOUT_HEIGHT
+	if UF.GetLegacyStatusGapPreview(cfg) or (cfg and cfg.statusGapMigrated) then return UF.STATUS_PHYSICAL_HEIGHT end
+	local legacyStatusGap = cfg and cfg.legacyStatusGap
+	if legacyStatusGap == nil then legacyStatusGap = unit ~= "pet" end
+	return legacyStatusGap and UF.STATUS_LAYOUT_HEIGHT or UF.STATUS_PHYSICAL_HEIGHT
 end
 
 function UF.GetStatusVisualOffsetY(anchor, physicalHeight, layoutHeight)
 	local delta = (tonumber(layoutHeight) or UF.STATUS_LAYOUT_HEIGHT) - (tonumber(physicalHeight) or UF.STATUS_PHYSICAL_HEIGHT)
-	if delta <= 0 then return 0 end
+	if layoutHeight == 0 then return 0 end
 	local point = type(anchor) == "string" and string.upper(anchor) or "CENTER"
 	if string.find(point, "BOTTOM", 1, true) then return 0 end
 	if string.find(point, "TOP", 1, true) then return delta end
 	return delta / 2
 end
 
-function UF.GetStatusHeightDelta(showStatus, unit)
-	return UF.ResolveStatusLayoutHeight(showStatus, unit) - UF.ResolveStatusHeight(nil, nil, showStatus)
+function UF.GetStatusHeightDelta(showStatus, unit, cfg)
+	local position = UF.GetStatusGapPosition(cfg, unit)
+	local offset = position and position.y or 0
+	return UF.ResolveStatusLayoutHeight(showStatus, unit, cfg) - UF.ResolveStatusHeight(nil, nil, showStatus) + offset
+end
+
+function UF.GetStatusTextLayoutHeight(cfg, unit, showStatus, statusHeight)
+	if not UF.GetStatusGapPosition(cfg, unit) then return UF.ResolveStatusLayoutHeight(showStatus, unit, cfg) end
+	return max(statusHeight, UF.STATUS_PHYSICAL_HEIGHT) + UF.GetStatusHeightDelta(showStatus, unit, cfg)
+end
+
+function UF.BeginLegacyStatusGapPreview(unit)
+	if UF.statusGapPreview then return nil end
+	local cfg = ensureDB(unit)
+	if cfg.legacyStatusGap ~= true or cfg.statusGapMigrated then return nil end
+
+	local preview = { unit = isBossUnit(unit) and "boss" or unit, cfg = cfg, db = addon.db, frames = addon.db.ufFrames }
+	UF.statusGapPreview = preview
+	return preview
+end
+
+function UF.SetLegacyStatusGapPreviewStyle(preview, modern)
+	if not preview or UF.statusGapPreview ~= preview or addon.db ~= preview.db or addon.db.ufFrames ~= preview.frames or preview.frames[preview.unit] ~= preview.cfg then return false end
+	if (preview.positions ~= nil) == modern then return false end
+	if not modern then
+		preview.positions = nil
+		return true
+	end
+
+	-- Capture fixed offsets from the current layout each time New Style is selected.
+	local unit, cfg = preview.unit, preview.cfg
+	local def = defaultsFor(unit)
+	local adjustment = UF.STATUS_LAYOUT_HEIGHT - UF.STATUS_PHYSICAL_HEIGHT
+	local positions = {}
+	local function capture(token, key)
+		local showStatus = UF.ShouldShowStatusLayout(cfg, token, def)
+		local previous = UF.GetStatusGapPosition(cfg, token)
+		positions[key] = {
+			height = UF.ResolveStatusHeight(cfg, def, showStatus, token),
+			y = (previous and previous.y or 0) + (showStatus and adjustment or 0),
+		}
+	end
+	if isBossUnit(unit) then
+		for i = 1, maxBossFrames do
+			local bossUnit = "boss" .. i
+			capture(bossUnit, bossUnit)
+		end
+	else
+		capture(unit, "frame")
+	end
+	preview.positions = positions
+	return true
+end
+
+function UF.FinishLegacyStatusGapPreview(preview, apply)
+	if not preview or UF.statusGapPreview ~= preview then return false end
+	UF.statusGapPreview = nil
+	if not apply or not preview.positions or addon.db ~= preview.db or addon.db.ufFrames ~= preview.frames or preview.frames[preview.unit] ~= preview.cfg then return false end
+	local cfg = preview.cfg
+	if cfg.legacyStatusGap ~= true or cfg.statusGapMigrated then return false end
+	cfg.statusGapPositions = preview.positions
+	cfg.legacyStatusGap = false
+	cfg.statusGapMigrated = true
+	return true
 end
 
 function UF.GetAnchorVerticalFactor(point)
@@ -11125,7 +11224,7 @@ function UF.GetUnitFrameStatusHeightDelta(frame)
 	if unit then
 		local cfg = ensureDB(unit)
 		local def = defaultsFor(unit)
-		return UF.GetStatusHeightDelta(UF.ShouldShowStatusLayout(cfg, unit, def), unit)
+		return UF.GetStatusHeightDelta(UF.ShouldShowStatusLayout(cfg, unit, def), unit, cfg)
 	end
 	return tonumber(frame and frame._eqolUFStatusHeightDelta) or 0
 end
@@ -11200,10 +11299,10 @@ local function updateStatus(cfg, unit)
 		or (supportsIdentityIndicators and pvpCfg.enabled == true)
 		or (supportsIdentityIndicators and roleCfg.enabled == true)
 		or (unit ~= UNIT.PLAYER and classificationCfg.enabled == true)
-	local statusHeight = UF.ResolveStatusHeight(cfg, def, showStatus)
-	local statusLayoutHeight = UF.ResolveStatusLayoutHeight(showStatus, unit)
+	local statusHeight = UF.ResolveStatusHeight(cfg, def, showStatus, unit)
+	local statusLayoutHeight = UF.GetStatusTextLayoutHeight(cfg, unit, showStatus, statusHeight)
 	st._statusLayoutHeight = statusLayoutHeight
-	if statusHeight <= 0 then statusHeight = 0.001 end
+	statusHeight = max(statusHeight, UF.STATUS_PHYSICAL_HEIGHT)
 	st.status:SetHeight(statusHeight)
 	st.status:SetShown(showStatusFrame)
 	local nameFontSize = scfg.nameFontSize or scfg.fontSize or 14
@@ -11706,12 +11805,12 @@ local function updatePortrait(cfg, unit)
 	applyPortraitSeparator(cfg, unit, st, not detached and not overlay)
 end
 
-local function layoutFrame(cfg, unit)
-	local st = states[unit]
+local function layoutFrame(cfg, unit, preview)
+	local st = preview or states[unit]
 	if not st or not st.frame then return end
 	local def = defaultsFor(unit)
 	local dynamicAnchorOwner = isBossUnit(unit) and bossContainer or st.frame
-	local dynamicWinner = UF.GetDynamicAnchorWinner(unit, dynamicAnchorOwner)
+	local dynamicWinner = not preview and UF.GetDynamicAnchorWinner(unit, dynamicAnchorOwner)
 	local showStatus = UF.ShouldShowStatusLayout(cfg, unit, def)
 	local pcfg = cfg.power or {}
 	local hcfg = cfg.health or {}
@@ -11725,7 +11824,7 @@ local function layoutFrame(cfg, unit)
 	end
 	local powerEnabled = pcfg.enabled ~= false
 	-- Detached player power keeps its geometry across forms; updatePower controls its alpha.
-	if unit == UNIT.PLAYER and powerEnabled and pcfg.detached ~= true and UFHelper and UFHelper.IsPrimaryPowerAllowed then
+	if not preview and unit == UNIT.PLAYER and powerEnabled and pcfg.detached ~= true and UFHelper and UFHelper.IsPrimaryPowerAllowed then
 		refreshMainPower(unit)
 		local powerEnum, powerToken = getMainPower(unit)
 		powerEnabled = UFHelper.IsPrimaryPowerAllowed(pcfg, powerDef, powerToken, powerEnum, unit) ~= false
@@ -11734,10 +11833,9 @@ local function layoutFrame(cfg, unit)
 	local secondaryPowerEnabled = unit == UNIT.PLAYER and st.secondaryPower and secondaryCfg.enabled ~= false and secondaryPowerToken ~= nil
 	local secondaryPowerDetached = secondaryPowerEnabled and secondaryCfg.detached == true
 	local width = UF.ResolvePixelLayoutSize(st.barGroup or st.frame, max(MIN_WIDTH, cfg.width or def.width))
-	local statusHeight = UF.ResolveStatusHeight(cfg, def, showStatus)
-	local statusLayoutHeight = UF.ResolveStatusLayoutHeight(showStatus, unit)
-	local statusHeightDelta = statusLayoutHeight - statusHeight
-	st._statusLayoutHeight = statusLayoutHeight
+	local statusHeight = UF.ResolveStatusHeight(cfg, def, showStatus, unit)
+	local statusHeightDelta = UF.GetStatusHeightDelta(showStatus, unit, cfg)
+	st._statusLayoutHeight = UF.GetStatusTextLayoutHeight(cfg, unit, showStatus, statusHeight)
 	st.frame._eqolUFStatusHeightDelta = statusHeightDelta
 	local healthHeight = UF.ResolvePixelLayoutSize(st.barGroup or st.frame, cfg.healthHeight or def.healthHeight)
 	local powerHeight = powerEnabled and UF.ResolvePixelLayoutSize(st.barGroup or st.frame, cfg.powerHeight or def.powerHeight) or 0
@@ -11839,7 +11937,7 @@ local function layoutFrame(cfg, unit)
 	portraitDetachedX = portraitDetachedX or 0
 	portraitDetachedY = portraitDetachedY or 0
 	st.frame:SetWidth(frameWidth)
-	local frameStrata = normalizeStrataToken(cfg.strata) or normalizeStrataToken(def.strata) or "LOW"
+	local frameStrata = preview and st.frame:GetFrameStrata() or normalizeStrataToken(cfg.strata) or normalizeStrataToken(def.strata) or "LOW"
 	if st.frame.GetFrameStrata and st.frame:GetFrameStrata() ~= frameStrata then st.frame:SetFrameStrata(frameStrata) end
 	local selection = st.frame.Selection
 	if selection and selection.SetFrameStrata then
@@ -11853,9 +11951,9 @@ local function layoutFrame(cfg, unit)
 		local targetStrata = (targetIndex and targetIndex > baseIndex) and cfg.strata or st._selectionBaseStrata
 		if targetStrata and selection.GetFrameStrata and selection:GetFrameStrata() ~= targetStrata then selection:SetFrameStrata(targetStrata) end
 	end
-	if cfg.frameLevel then
+	if not preview and cfg.frameLevel then
 		st.frame:SetFrameLevel(cfg.frameLevel)
-	else
+	elseif not preview then
 		local pf = _G.PlayerFrame
 		if pf and pf.GetFrameLevel then st.frame:SetFrameLevel(pf:GetFrameLevel()) end
 	end
@@ -11870,7 +11968,7 @@ local function layoutFrame(cfg, unit)
 	if st.healthContainer and st.healthContainer.SetFrameLevel then st.healthContainer:SetFrameLevel(frameLevel + 2) end
 	if st.health.SetFrameLevel then st.health:SetFrameLevel(frameLevel + 2) end
 	if st.dataBar and st.dataBar.SetFrameLevel then st.dataBar:SetFrameLevel(frameLevel + 1) end
-	st.status:SetHeight(statusHeight)
+	st.status:SetHeight(max(statusHeight, UF.STATUS_PHYSICAL_HEIGHT))
 	if st.healthContainer then st.healthContainer:SetSize(width, healthHeight) end
 	st.health:SetSize(width, healthHeight)
 	local detachedGrowFromCenter = powerDetached and pcfg.detachedGrowFromCenter == true
@@ -11902,11 +12000,11 @@ local function layoutFrame(cfg, unit)
 	if st.dataBar then st.dataBar:ClearAllPoints() end
 
 	local anchor = cfg.anchor or def.anchor or defaults.player.anchor
-	if isBossUnit(unit) then
+	if not preview and isBossUnit(unit) then
 		local container = ensureBossContainer() or UIParent
 		if st.opacityParent and st.opacityParent:GetParent() ~= container then st.opacityParent:SetParent(container) end
 		if st.frame:GetNumPoints() == 0 then st.frame:SetPoint("TOPLEFT", container, "TOPLEFT", 0, 0) end
-	else
+	elseif not preview then
 		local placement = dynamicWinner and dynamicWinner.placement or anchor
 		local rel = dynamicWinner and dynamicWinner.frame or resolveRelativeAnchorFrame(anchor and (anchor.relativeTo or anchor.relativeFrame), st.frame and st.frame:GetName())
 		local anchorPoint = placement.point or "CENTER"
@@ -12201,7 +12299,7 @@ local function layoutFrame(cfg, unit)
 
 	local totalHeight = statusHeight + barsHeight + dataBarExternalLayoutHeight
 	st.frame:SetHeight(totalHeight)
-	UFHelper.UpdateUnitClickAreas(st, portraitEnabled and not UF.IsOverlayPortrait(cfg, unit), nil, cfg)
+	if not preview then UFHelper.UpdateUnitClickAreas(st, portraitEnabled and not UF.IsOverlayPortrait(cfg, unit), nil, cfg) end
 	UF.AlignBorderHostToPixelGrid(st.barGroup)
 	if detachedPowerBorder then UF.AlignBorderHostToPixelGrid(st.powerGroup) end
 	if detachedSecondaryPowerBorder then UF.AlignBorderHostToPixelGrid(st.secondaryPowerGroup) end
@@ -12310,7 +12408,7 @@ local function layoutFrame(cfg, unit)
 		end
 	end
 	if unit == UNIT.TARGET or unit == UNIT.FOCUS or isBossUnit(unit) then AuraUtil.RefreshHealerBuffPlacementUnit(unit) end
-	if unit == UNIT.PLAYER or unit == UNIT.TARGET or unit == UNIT.FOCUS then
+	if not preview and (unit == UNIT.PLAYER or unit == UNIT.TARGET or unit == UNIT.FOCUS) then
 		local dispelCfg = cfg.status and cfg.status.dispelTint
 		local dispelDef = def.status and def.status.dispelTint
 		AuraUtil.PrecreateManagedDispelBorder(st, st.healthContainer or st.health or st.frame, dispelCfg, dispelDef)
@@ -12632,8 +12730,8 @@ local function ensureFrames(unit)
 	hookTextFrameLevels(st)
 end
 
-local function applyBars(cfg, unit)
-	local st = states[unit]
+local function applyBars(cfg, unit, preview)
+	local st = preview or states[unit]
 	if not st or not st.health or not st.power then return end
 	local info = UNITS[unit]
 	local allowAbsorb = not (info and info.disableAbsorb)
@@ -12647,7 +12745,9 @@ local function applyBars(cfg, unit)
 	local secondaryCfg = cfg.secondaryPower or {}
 	local powerEnabled = pcfg.enabled ~= false
 	local powerEnum, powerToken
-	if powerEnabled then
+	if powerEnabled and preview then
+		powerEnum, powerToken = Enum.PowerType.Mana, "MANA"
+	elseif powerEnabled then
 		if unit == UNIT.PLAYER then refreshMainPower(unit) end
 		powerEnum, powerToken = getMainPower(unit)
 		if unit == UNIT.PLAYER and pcfg.detached ~= true and UFHelper and UFHelper.IsPrimaryPowerAllowed then powerEnabled = UFHelper.IsPrimaryPowerAllowed(pcfg, defP, powerToken, powerEnum, unit) ~= false end
@@ -12694,7 +12794,7 @@ local function applyBars(cfg, unit)
 		if st.powerTextCenter then st.powerTextCenter:SetText("") end
 		if st.powerTextRight then st.powerTextRight:SetText("") end
 	end
-	if unit == UNIT.PLAYER and addon.ManaRegen then addon.ManaRegen.SetEnabled(st.power, powerEnabled and pcfg.manaRegenSpark == true and powerEnum == Enum.PowerType.Mana, true) end
+	if not preview and unit == UNIT.PLAYER and addon.ManaRegen then addon.ManaRegen.SetEnabled(st.power, powerEnabled and pcfg.manaRegenSpark == true and powerEnum == Enum.PowerType.Mana, true) end
 
 	if st.secondaryPower then
 		local secondaryToken
@@ -12879,6 +12979,17 @@ local function applyBars(cfg, unit)
 		UFHelper.applyBarTextColor(secondaryCfg, defSP, st.secondaryPowerTextLeft, st.secondaryPowerTextCenter, st.secondaryPowerTextRight)
 	end
 	syncTextFrameLevels(st)
+end
+
+function UF.RenderFirstStartPlayerPreview(state, cfg)
+	state.cfg = cfg
+	applyBars(cfg, UNIT.PLAYER, state)
+	layoutFrame(cfg, UNIT.PLAYER, state)
+	local def = defaultsFor(UNIT.PLAYER)
+	state.health:SetStatusBarColor(UF.resolveHealthBaseColor(UNIT.PLAYER, cfg.health, def.health))
+	local color = PowerBarColor and PowerBarColor.MANA
+	if color then state.power:SetStatusBarColor(color.r, color.g, color.b) else state.power:SetStatusBarColor(unpack(cfg.power.color)) end
+	UFHelper.UpdateFirstStartPlayerPreviewText(state, cfg, def)
 end
 
 function UF.ResolveNameTextColor(unit, st)

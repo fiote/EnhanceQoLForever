@@ -78,6 +78,7 @@ local DB = {
 	BORDER_SIZE = "classBuffReminderBorderSize",
 	BORDER_OFFSET = "classBuffReminderBorderOffset",
 	BORDER_COLOR = "classBuffReminderBorderColor",
+	SHOW_XY_TEXT = "classBuffReminderShowXYText",
 	XY_TEXT_SIZE = "classBuffReminderXYTextSize",
 	XY_TEXT_OUTLINE = "classBuffReminderXYTextOutline",
 	XY_TEXT_COLOR = "classBuffReminderXYTextColor",
@@ -358,6 +359,7 @@ function Reminder:Initialize()
 	init(DB.BORDER_SIZE, defaults.borderSize)
 	init(DB.BORDER_OFFSET, defaults.borderOffset)
 	init(DB.BORDER_COLOR, defaults.borderColor)
+	init(DB.SHOW_XY_TEXT, defaults.showXYText)
 	init(DB.XY_TEXT_SIZE, defaults.xyTextSize)
 	init(DB.XY_TEXT_OUTLINE, defaults.xyTextOutline)
 	init(DB.XY_TEXT_COLOR, defaults.xyTextColor)

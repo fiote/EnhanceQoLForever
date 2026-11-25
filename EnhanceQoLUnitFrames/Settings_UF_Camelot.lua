@@ -1747,7 +1747,7 @@ local function getEditModeAnchorValues(unit)
 	local ownerFrameName = UF.GetAnchorFrameName and UF.GetAnchorFrameName(unit) or nil
 	local relativeFrame = UF.ResolveRelativeAnchorFrame and UF.ResolveRelativeAnchorFrame(relativeName, ownerFrameName) or UIParent
 	local showStatus = unit ~= "boss" and UF.ShouldShowStatusLayout and UF.ShouldShowStatusLayout(cfg, unit, def)
-	local statusHeightDelta = unit ~= "boss" and UF.GetStatusHeightDelta and UF.GetStatusHeightDelta(showStatus, unit) or 0
+	local statusHeightDelta = unit ~= "boss" and UF.GetStatusHeightDelta and UF.GetStatusHeightDelta(showStatus, unit, cfg) or 0
 	local y = UF.ResolvePhysicalUnitFrameAnchorY and UF.ResolvePhysicalUnitFrameAnchorY(point, relativePoint, anchor.y, relativeFrame, statusHeightDelta) or tonumber(anchor.y) or 0
 	return point, relativePoint, x, y
 end
@@ -2771,8 +2771,8 @@ local function calcLayout(unit, frame)
 	local secondaryPowerDetached = secondaryPowerEnabled and secondaryCfg.detached == true
 	local statusUnit = unit == "boss" and "boss1" or unit
 	local showStatus = UF.ShouldShowStatusLayout and UF.ShouldShowStatusLayout(cfg, statusUnit, def)
-	local statusHeight = UF.ResolveStatusHeight and UF.ResolveStatusHeight(cfg, def, showStatus) or 0
-	local statusHeightDelta = unit ~= "boss" and UF.GetStatusHeightDelta and UF.GetStatusHeightDelta(showStatus, unit) or 0
+	local statusHeight = UF.ResolveStatusHeight and UF.ResolveStatusHeight(cfg, def, showStatus, statusUnit) or 0
+	local statusHeightDelta = unit ~= "boss" and UF.GetStatusHeightDelta and UF.GetStatusHeightDelta(showStatus, unit, cfg) or 0
 	local borderOffset = 0
 	if cfg.border and cfg.border.enabled then
 		borderOffset = cfg.border.offset
@@ -4688,6 +4688,13 @@ local function buildUnitSettings(unit)
 	end
 
 	if isBoss then UF.ui.appendBossLayoutSettings(list, unit, def, refreshSelf) end
+
+	if UF.ui.AppendLegacyStatusGapSettings then
+		UF.ui.AppendLegacyStatusGapSettings(list, unit, ensureConfig, function()
+			refreshFunc()
+			refreshSettingsUI()
+		end)
+	end
 	addDivider("frame")
 
 	list[#list + 1] = radioDropdown(L["Frame strata"] or "Frame strata", UF.ui.strataOptions, function()
@@ -10136,6 +10143,8 @@ local function buildUnitSettings(unit)
 	return orderedList
 end
 
+function UF.BuildFirstStartPlayerSettings() return buildUnitSettings("player"), UF.ui.BuildSettingsNavigation() end
+
 local function buildStandaloneCastbarSettings(unit)
 	local playerModule = getCastbarModule()
 	local function getCastbarModule() return playerModule and playerModule.ForUnit and playerModule.ForUnit(unit or "player") or playerModule end
@@ -10319,7 +10328,7 @@ local function registerUnitFrame(unit, info)
 		cfg.anchor.relativeFrame = cfg.anchor.relativeTo
 		local def = defaultsFor(unit)
 		local showStatus = unit ~= "boss" and UF.ShouldShowStatusLayout and UF.ShouldShowStatusLayout(cfg, unit, def)
-		local statusHeightDelta = unit ~= "boss" and UF.GetStatusHeightDelta and UF.GetStatusHeightDelta(showStatus, unit) or 0
+		local statusHeightDelta = unit ~= "boss" and UF.GetStatusHeightDelta and UF.GetStatusHeightDelta(showStatus, unit, cfg) or 0
 		local relativeFrame = UF.ResolveRelativeAnchorFrame and UF.ResolveRelativeAnchorFrame(cfg.anchor.relativeTo, info.frameName) or UIParent
 		if UF.ResolveStoredUnitFrameAnchorY then newY = UF.ResolveStoredUnitFrameAnchorY(newPoint, newRelativePoint, newY, relativeFrame, statusHeightDelta) end
 		if oldPoint == newPoint and oldRelativePoint == newRelativePoint and oldX == newX and oldY == newY then return end

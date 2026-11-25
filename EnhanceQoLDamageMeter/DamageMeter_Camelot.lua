@@ -5929,12 +5929,13 @@ function DamageMeter:StopWindowResize(index)
 	self:CommitWindowResize(index, frame:GetWidth(), frame:GetHeight())
 end
 
-function DamageMeter:EnsureWindow(index)
+function DamageMeter:EnsureWindow(index, previewParent)
 	self.windows = self.windows or {}
 	local window = self.windows[index]
 	if window then return window end
 
-	local frame = CreateFrame("Frame", host.framePrefix .. "Frame" .. index, UIParent, "BackdropTemplate")
+	local name = not previewParent and (host.framePrefix .. "Frame" .. index) or nil
+	local frame = CreateFrame("Frame", name, previewParent or UIParent, "BackdropTemplate")
 	frame:SetFrameStrata("MEDIUM")
 	if frame.SetClampedToScreen then frame:SetClampedToScreen(true) end
 	frame:SetMovable(false)
@@ -6190,6 +6191,10 @@ function DamageMeter:EnsureWindow(index)
 	frame.rows = {}
 	self.windows[index] = frame
 	return frame
+end
+
+function DamageMeter:GetFirstStartPreviewData()
+	return copyValue(DEFAULT_WINDOW), PREVIEW_SESSION, formatNumber
 end
 
 function DamageMeter:EnsureSuspendedWindowAnchor(index)

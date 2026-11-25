@@ -13,6 +13,7 @@
 	<Script file='Loot_Camelot.lua'/>
 	<Script file='VendorEconomy_Camelot.lua'/>
 	<Script file='System.lua'/>
+	<Script file='NavigationWaypoint_Camelot.lua'/>
 	<Script file='CVarOptions.lua'/>
 	<Script file='AutoRankUp.lua'/>
 	<Script file='NameplateComboPoints_Camelot.lua'/>

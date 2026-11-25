@@ -219,34 +219,35 @@ function I.Get(item, fields, context)
 	end
 	return facts, statuses
 end
+local function hasLoadedItemData(id)
+	local state = { item = { itemID = id }, reference = id, context = {} }
+	base(state)
+	if state.baseStatus ~= "known" then return false end
+	F.failures[id] = nil
+	return true
+end
+
+local function backOffItemLoad(id)
+	local evicted = F.failureOrder[F.failureNext]
+	if evicted then F.failures[evicted] = nil end
+	F.failureOrder[F.failureNext] = id; F.failureNext = F.failureNext % 1024 + 1
+	F.failures[id] = P.Now() + 15
+end
+
 local function finish(id, success, reason)
 	local pending = F.pending[id]
 	if not pending then return end
 	F.pending[id], F.pendingCount = nil, F.pendingCount - 1
-	if not success then
-		local evicted = F.failureOrder[F.failureNext]
-		if evicted then F.failures[evicted] = nil end
-		F.failureOrder[F.failureNext] = id; F.failureNext = F.failureNext % 1024 + 1
-		F.failures[id] = P.Now() + 15
-	end
+	local dataAvailable = success and hasLoadedItemData(id)
+	if not dataAvailable then backOffItemLoad(id) end
 	local fieldSet, fields = {}, {}
 	for _, request in ipairs(pending.requests) do
 		local facts, statuses = I.Get(request.item, request.fields, request.context)
 		for name in pairs(statuses) do if not fieldSet[name] then fieldSet[name] = true; fields[#fields + 1] = name end end
 		if request.callback then pcall(request.callback, facts, statuses) end
 	end
-	if success then
-		local state = { item = { itemID = id }, reference = id, context = {} }
-		base(state)
-		if state.baseStatus ~= "known" then
-			local evicted = F.failureOrder[F.failureNext]
-			if evicted then F.failures[evicted] = nil end
-			F.failureOrder[F.failureNext] = id; F.failureNext = F.failureNext % 1024 + 1
-			F.failures[id] = P.Now() + 15
-		end
-	end
 	table.sort(fields)
-	P.Emit({ itemID = id, fields = fields, reason = reason or "itemData" })
+	P.Emit({ itemID = id, fields = fields, reason = reason or "itemData", dataAvailable = dataAvailable })
 end
 function I.Request(item, fields, context, callback)
 	local normalized = I.NormalizeItem(item)
@@ -296,11 +297,14 @@ function P.OnEvent(event, ...)
 		if P.Safe(id) and P.Safe(success) then
 			-- Global item-cache events also come from the character panel, bank and
 			-- other consumers. Only complete data this service actually awaited.
-			if not F.pending[id] and not F.missing[id] then return end
+			if not F.pending[id] and (not success or not F.missing[id]) then return end
 			F.missing[id] = nil
 			for key, entry in pairs(F.baseCache) do if entry.itemID == id then F.baseCache[key] = nil end end
-			if success then F.failures[id] = nil end
-			if F.pending[id] then finish(id, success == true) else P.Emit({ itemID = id, fields = {}, reason = "itemData" }) end
+			if F.pending[id] then
+				finish(id, success == true)
+			elseif hasLoadedItemData(id) then
+				P.Emit({ itemID = id, fields = {}, reason = "itemData", dataAvailable = true })
+			end
 		end
 	else
 		-- Item definitions do not change when equipment/collections are opened.

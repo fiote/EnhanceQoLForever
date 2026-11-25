@@ -572,9 +572,9 @@ local function setSharedSlotEnabled(slot, enabled)
 
 end
 
-registerEditModeBars = function()
+local function buildEditModeBars(preview)
 	if not EditMode or not EditMode.RegisterFrame then return end
-	if addon and addon.db and addon.db.enableResourceFrame == false then
+	if not preview and addon and addon.db and addon.db.enableResourceFrame == false then
 		unregisterEditModeBars()
 		return
 	end
@@ -583,58 +583,67 @@ registerEditModeBars = function()
 	local registeredByBar = ResourceBars._editModeRegisteredFrameByBar or {}
 	local registeredFrameNameByBar = ResourceBars._editModeRegisteredFrameNameByBar or {}
 	local registeredSettingsFrames = ResourceBars._editModeRegisteredSettingsFrames or {}
-	ResourceBars._editModeRegisteredFrames = registeredFrames
-	ResourceBars._editModeRegisteredFrameByBar = registeredByBar
-	ResourceBars._editModeRegisteredFrameNameByBar = registeredFrameNameByBar
-	ResourceBars._editModeRegisteredSettingsFrames = registeredSettingsFrames
-	ensureSettingsMaxHeightWatcher()
+	if not preview then
+		ResourceBars._editModeRegisteredFrames = registeredFrames
+		ResourceBars._editModeRegisteredFrameByBar = registeredByBar
+		ResourceBars._editModeRegisteredFrameNameByBar = registeredFrameNameByBar
+		ResourceBars._editModeRegisteredSettingsFrames = registeredSettingsFrames
+		ensureSettingsMaxHeightWatcher()
+	end
 
 	local function registerBar(idSuffix, frameName, barType, widthDefault, heightDefault, opts)
 		opts = opts or {}
+		local preview = opts.preview
 		local sharedSlot = opts.sharedSlot
 		local genericSharedPowerEditor = sharedSlot and sharedSlot ~= "HEALTH"
-		local frame
-		if sharedSlot and sharedSlot ~= "HEALTH" and ResourceBars and ResourceBars.SyncSharedSlotProxyFrame then
+		local frame = preview
+		if not preview and sharedSlot and sharedSlot ~= "HEALTH" and ResourceBars and ResourceBars.SyncSharedSlotProxyFrame then
 			ResourceBars.SyncSharedSlotProxyFrame(sharedSlot, getClassContext())
 		end
-		if sharedSlot and sharedSlot ~= "HEALTH" and ResourceBars and ResourceBars.EnsureSharedSlotProxyFrame then
+		if not preview and sharedSlot and sharedSlot ~= "HEALTH" and ResourceBars and ResourceBars.EnsureSharedSlotProxyFrame then
 			frame = ResourceBars.EnsureSharedSlotProxyFrame(sharedSlot)
-		else
+		elseif not preview then
 			frame = _G[frameName]
 		end
 		if not frame then return end
 		local actualFrameName = (frame.GetName and frame:GetName()) or frameName
-		local currentContext = getClassContext()
+		local currentContext = not preview and getClassContext() or nil
 		local registeredContext = currentContext
 		local frameId = (ResourceBars.GetEditModeFrameId and ResourceBars.GetEditModeFrameId(idSuffix, addon.variables.unitClass, registeredContext))
 			or ("resourceBar_" .. tostring(addon.variables.unitClass or "UNKNOWN") .. "_" .. tostring(currentContext) .. "_" .. tostring(idSuffix))
-		local prevId = registeredByBar[idSuffix]
-		local prevFrameName = registeredFrameNameByBar[idSuffix]
-		local existingEntry = EditMode and EditMode.frames and EditMode.frames[frameId] or nil
-		local existingFrame = existingEntry and existingEntry.frame or nil
-		if prevId and prevId ~= frameId and EditMode and EditMode.UnregisterFrame then
-			EditMode:UnregisterFrame(prevId, false)
-			registeredFrames[prevId] = nil
-			registeredSettingsFrames[prevId] = nil
+		if not preview then
+			local prevId = registeredByBar[idSuffix]
+			local prevFrameName = registeredFrameNameByBar[idSuffix]
+			local existingEntry = EditMode and EditMode.frames and EditMode.frames[frameId] or nil
+			local existingFrame = existingEntry and existingEntry.frame or nil
+			if prevId and prevId ~= frameId and EditMode and EditMode.UnregisterFrame then
+				EditMode:UnregisterFrame(prevId, false)
+				registeredFrames[prevId] = nil
+				registeredSettingsFrames[prevId] = nil
+			end
+			if prevId == frameId and EditMode and EditMode.UnregisterFrame and ((prevFrameName and prevFrameName ~= actualFrameName) or (existingFrame and existingFrame ~= frame)) then
+				EditMode:UnregisterFrame(frameId, false)
+				registeredFrames[frameId] = nil
+				registeredSettingsFrames[frameId] = nil
+			end
+			if registeredFrames[frameId] and existingFrame == frame then return end
+			registeredByBar[idSuffix] = frameId
+			registeredFrameNameByBar[idSuffix] = actualFrameName
 		end
-		if prevId == frameId and EditMode and EditMode.UnregisterFrame and ((prevFrameName and prevFrameName ~= actualFrameName) or (existingFrame and existingFrame ~= frame)) then
-			EditMode:UnregisterFrame(frameId, false)
-			registeredFrames[frameId] = nil
-			registeredSettingsFrames[frameId] = nil
-		end
-		if registeredFrames[frameId] and existingFrame == frame then return end
-		registeredByBar[idSuffix] = frameId
-		registeredFrameNameByBar[idSuffix] = actualFrameName
 		local function currentLiveBarType()
+			if preview then return barType end
 			local context = registeredContext or getClassContext()
 			if sharedSlot and ResourceBars and ResourceBars.GetResolvedBarTypeForSharedSlot then return ResourceBars.GetResolvedBarTypeForSharedSlot(sharedSlot, context) end
 			return barType
 		end
-		local cfg = ResourceBars.EnsureSharedSlotStore(sharedSlot)
-		if not cfg and ResourceBars and ResourceBars.getBarSettings then cfg = ResourceBars.getBarSettings(barType) end
-		if not cfg and ResourceBars and ResourceBars.GetBarSettings then cfg = ResourceBars.GetBarSettings(barType) end
-		local anchorTargetType = sharedSlot or currentLiveBarType() or barType
-		local anchor = ResourceBars and ResourceBars.getAnchor and ResourceBars.getAnchor(anchorTargetType, registeredContext)
+		local cfg, anchor
+		if not preview then
+			cfg = ResourceBars.EnsureSharedSlotStore(sharedSlot)
+			if not cfg and ResourceBars and ResourceBars.getBarSettings then cfg = ResourceBars.getBarSettings(barType) end
+			if not cfg and ResourceBars and ResourceBars.GetBarSettings then cfg = ResourceBars.GetBarSettings(barType) end
+			local anchorTargetType = sharedSlot or currentLiveBarType() or barType
+			anchor = ResourceBars and ResourceBars.getAnchor and ResourceBars.getAnchor(anchorTargetType, registeredContext)
+		end
 		local titleLabel = opts.titleLabel
 			or ((barType == "HEALTH") and (HEALTH or "Health") or (ResourceBars.PowerLabels and ResourceBars.PowerLabels[barType]) or _G["POWER_TYPE_" .. barType] or _G[barType] or barType)
 
@@ -649,7 +658,7 @@ registerEditModeBars = function()
 		cfg.backdrop.edgeSize = cfg.backdrop.edgeSize or 3
 		cfg.backdrop.outset = cfg.backdrop.outset or 0
 		cfg.backdrop.backgroundInset = max(0, cfg.backdrop.backgroundInset or 0)
-		local function currentSlotConfig() return ResourceBars.EnsureSharedSlotStore(sharedSlot) end
+		local function currentSlotConfig() return preview and cfg or ResourceBars.EnsureSharedSlotStore(sharedSlot) end
 
 		local selectedSharedPowerType
 		local function powerTypeLabel(pType)
@@ -667,6 +676,7 @@ registerEditModeBars = function()
 		end
 
 		local function collectSharedPowerTypes()
+			if preview then return { barType } end
 			local liveType = currentLiveBarType()
 			if not genericSharedPowerEditor then return liveType and isPowerTypeAvailableForSettings(liveType) and { liveType } or {} end
 			if ResourceBars and ResourceBars.GetSharedSlotPossibleTypes then
@@ -964,7 +974,7 @@ registerEditModeBars = function()
 			local a = ensureAnchorTable()
 			return not a or (a.relativeFrame or "UIParent") == "UIParent"
 		end
-		local dynamicAnchorConsumerId = sharedSlot and ResourceBars and ResourceBars.GetSharedSlotDynamicAnchorId and ResourceBars.GetSharedSlotDynamicAnchorId(sharedSlot)
+		local dynamicAnchorConsumerId = not preview and sharedSlot and ResourceBars and ResourceBars.GetSharedSlotDynamicAnchorId and ResourceBars.GetSharedSlotDynamicAnchorId(sharedSlot)
 		local function usesDynamicAnchor()
 			return dynamicAnchorConsumerId and ResourceBars and ResourceBars.IsSharedSlotDynamicAnchorEnabled and ResourceBars.IsSharedSlotDynamicAnchorEnabled(sharedSlot) or false
 		end
@@ -4237,6 +4247,8 @@ registerEditModeBars = function()
 			ResourceBars.PrepareNavigationSettings(settingsList, settingType, barType, collectSharedPowerTypes())
 		end
 
+		if preview then return settingsList end
+
 		if settingsList and dynamicAnchorConsumerId and addon.DynamicAnchors then
 			local dynamicAnchorInsertAt
 			for index, setting in ipairs(settingsList) do
@@ -4413,6 +4425,10 @@ registerEditModeBars = function()
 		registered = registered + 1
 	end
 
+	if preview then
+		return registerBar("MAIN", preview:GetName(), "MANA", ResourceBars.DEFAULT_POWER_WIDTH, ResourceBars.DEFAULT_POWER_HEIGHT, { sharedSlot = "MAIN", preview = preview })
+	end
+
 	local activeContext = getClassContext()
 	local function clearUnusedRegistrations(allowed)
 		for key, oldId in pairs(registeredByBar) do
@@ -4455,6 +4471,13 @@ registerEditModeBars = function()
 	end
 
 	ResourceBars._editModeRegistered = registered > 0
+end
+
+registerEditModeBars = function() return buildEditModeBars() end
+
+function ResourceBars.BuildFirstStartSettings(frame)
+	local options = addon.EditModeNavigationProfiles.Get("resourceBar_firstStart")
+	return buildEditModeBars(frame), options
 end
 
 ResourceBars.RegisterEditModeFrames = registerEditModeBars

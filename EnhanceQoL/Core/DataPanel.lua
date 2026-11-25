@@ -2361,6 +2361,8 @@ function DataPanel.Create(id, name, existingOnly)
 				data.partsFontShadow = fontShadow
 				local total = 0
 				local visibleCount = 0
+				local vertical = data.partsLayout == "vertical"
+				local spacing = data.partsSpacing or 5
 				for _, child in ipairs(data.parts) do
 					if child and child.text then
 						local _, size = child.text:GetFont()
@@ -2380,8 +2382,12 @@ function DataPanel.Create(id, name, existingOnly)
 					end
 					if child and child:IsShown() then
 						local width = child.lastWidth or 0
-						if visibleCount > 0 then total = total + 5 end
-						total = total + width
+						if vertical then
+							total = math.max(total, width)
+						else
+							if visibleCount > 0 then total = total + spacing end
+							total = total + width
+						end
 						visibleCount = visibleCount + 1
 					end
 				end

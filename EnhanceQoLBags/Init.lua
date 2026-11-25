@@ -1,4 +1,4 @@
--- luacheck: globals C_Bank C_Container C_EquipmentSet
+-- luacheck: globals C_Bank C_Container C_EquipmentSet C_GameRules
 local parentAddonName = "EnhanceQoL"
 local addonName, addon = ...
 
@@ -532,6 +532,17 @@ function addon.GetCurrentCharacterGUID()
 	return getCurrentCharacterGUID()
 end
 
+local function getCurrentMoneyRuleset()
+	local rules = Enum and Enum.GameRule
+	local isActive = C_GameRules and C_GameRules.IsGameRuleActive
+	if rules and isActive and rules.HardcoreRuleset and rules.RPRuleset and rules.PvPRuleset then
+		if isActive(rules.HardcoreRuleset) then return "Hardcore" end
+		local pvp = isActive(rules.PvPRuleset)
+		if isActive(rules.RPRuleset) then return pvp and "RP-PvP" or "RP" end
+		return pvp and "PvP" or "PvE"
+	end
+end
+
 function addon.UpdateTrackedCharacterMoney()
 	if not addon.savedVariablesLoaded then
 		return nil
@@ -544,15 +555,21 @@ function addon.UpdateTrackedCharacterMoney()
 
 	local tracker = ensureMoneyTracker()
 	local _, classToken = UnitClass("player")
-	tracker[characterGUID] = {
-		name = addon.variables and addon.variables.isForever and not addon.variables.isTBC and addon.functions.GetUnitDisplayName("player") or UnitName("player"),
+	local isForever = addon.variables and addon.variables.isForever and not addon.variables.isTBC
+	local info = {
+		name = isForever and addon.functions.GetUnitDisplayName("player") or UnitName("player"),
 		realm = GetRealmName(),
 		class = classToken,
 		money = GetMoney() or 0,
 		lastSeen = time and time() or 0,
 	}
+	if isForever then
+		info.ruleset = getCurrentMoneyRuleset()
+		info.faction = UnitFactionGroup("player")
+	end
+	tracker[characterGUID] = info
 
-	return tracker[characterGUID]
+	return info
 end
 
 function addon.UpdateWarbandGold()
@@ -576,22 +593,30 @@ function addon.GetWarbandGold()
 	return tonumber(addon.DB.warbandGold) or 0
 end
 
-function addon.GetTrackedCharacterGoldEntries()
+function addon.GetTrackedCharacterGoldEntries(currentRulesetOnly)
 	local tracker = ensureMoneyTracker()
 	local currentGUID = getCurrentCharacterGUID()
 	local entries = {}
+	local isScoped = currentRulesetOnly and addon.variables and addon.variables.isForever and not addon.variables.isTBC
+	local currentRuleset = isScoped and getCurrentMoneyRuleset()
 
 	for guid, info in pairs(tracker) do
 		if type(info) == "table" and tonumber(info.money) ~= nil then
-			entries[#entries + 1] = {
-				guid = guid,
-				name = info.name,
-				realm = info.realm,
-				class = info.class,
-				money = tonumber(info.money) or 0,
-				lastSeen = tonumber(info.lastSeen) or 0,
-				isCurrent = guid == currentGUID,
-			}
+			local isCurrent = guid == currentGUID
+			local hasKnownFaction = info.faction == "Alliance" or info.faction == "Horde"
+			local matchesRuleset = currentRuleset and info.ruleset == currentRuleset
+			if not isScoped or isCurrent or (matchesRuleset and hasKnownFaction) then
+				entries[#entries + 1] = {
+					guid = guid,
+					name = info.name,
+					realm = info.realm,
+					class = info.class,
+					money = tonumber(info.money) or 0,
+					lastSeen = tonumber(info.lastSeen) or 0,
+					isCurrent = isCurrent,
+					faction = info.faction,
+				}
+			end
 		end
 	end
 

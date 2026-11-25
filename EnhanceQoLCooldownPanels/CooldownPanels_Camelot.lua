@@ -5906,6 +5906,7 @@ function CooldownPanels:ReleaseDeletedPanelRuntime(panelId)
 	end
 
 	local frame = runtime.frame
+	if self.HoverBuffPanel then self.HoverBuffPanel:Deactivate(frame) end
 	if frame then
 		local detachedDriver = self:ApplyVisibilityDriverToFrame(frame, nil)
 		if allRuntime.pendingVisibilityDriverUpdates then
@@ -6048,6 +6049,8 @@ function CooldownPanels:AddEntry(panelId, entryType, idValue, overrides)
 	if not panel then return nil end
 	local typeKey = entryType and tostring(entryType):upper() or nil
 	if typeKey ~= "SPELL" and typeKey ~= "ITEM" and typeKey ~= "SLOT" and typeKey ~= "STANCE" and typeKey ~= "MACRO" and typeKey ~= "CDM_AURA" and typeKey ~= "TOTEM" then return nil end
+	local hoverMode = self.HoverBuffPanel and self.HoverBuffPanel:IsEnabled(panel.layout)
+	if hoverMode and not self.HoverBuffPanel:CanAddEntry(panel) then return nil end
 	local entryValue = idValue
 	local numericValue = tonumber(idValue)
 	local itemWasHigherRank = false
@@ -6081,7 +6084,7 @@ function CooldownPanels:AddEntry(panelId, entryType, idValue, overrides)
 	elseif typeKey == "CDM_AURA" then
 		entryValue = idValue
 	end
-	if Helper.IsFixedLayout(panel.layout) then
+	if not hoverMode and Helper.IsFixedLayout(panel.layout) then
 		local resolvedOverrides, fixedError = self:ResolveFixedEntryAddOverrides(panel, overrides)
 		if fixedError then return nil end
 		overrides = resolvedOverrides
@@ -6110,7 +6113,7 @@ function CooldownPanels:AddEntry(panelId, entryType, idValue, overrides)
 	panel.order[#panel.order + 1] = entryId
 	if Helper.UpdatePanelEntrySpecFilterState then Helper.UpdatePanelEntrySpecFilterState(panel) end
 	Helper.InvalidateFixedLayoutCache(panel)
-	if Helper.IsFixedLayout(panel.layout) then Helper.EnsureFixedSlotAssignments(panel) end
+	if not hoverMode and Helper.IsFixedLayout(panel.layout) then Helper.EnsureFixedSlotAssignments(panel) end
 	if entry.type == "ITEM" and entry.itemID then
 		updateItemCountCacheForItem(entry.itemID)
 	elseif entry.type == "MACRO" then
@@ -6820,6 +6823,7 @@ function CooldownPanels:RebuildSpellIndex()
 				enabledPanelIds[#enabledPanelIds + 1] = panelId
 				local layout = panel.layout
 				Helper.BindPanelBarEntries(panel)
+				local hoverMode = self.HoverBuffPanel and self.HoverBuffPanel:IsEnabled(layout)
 				local wantsRangeCheck = layout and layout.rangeOverlayEnabled == true
 				for entryId, entry in pairs(panel.entries or {}) do
 					local spellId
@@ -6839,7 +6843,7 @@ function CooldownPanels:RebuildSpellIndex()
 						entryIds[#entryIds + 1] = entryId
 						barEntryCount = barEntryCount + 1
 					end
-					if entry and entry.type == "CDM_AURA" then
+					if entry and entry.type == "CDM_AURA" and (not hoverMode or Helper.IsAuraGroupUnit(entry.auraUnit)) then
 						local entryIds = cdmAuraEntryIdsByPanel[panelId]
 						if not entryIds then
 							cdmAuraPanels[panelId] = true
@@ -24073,6 +24077,10 @@ function CooldownPanels:ApplyLayout(panelId, countOverride)
 	CooldownPanels.ClearRuntimeResolvedLayoutCache(runtime)
 	panel.layout = panel.layout or Helper.CopyTableShallow(Helper.PANEL_LAYOUT_DEFAULTS)
 	local layout = panel.layout
+	if self.HoverBuffPanel and self.HoverBuffPanel:IsEnabled(layout) then
+		self:ApplyHoverBuffPanelSize(panelId, runtime, frame, layout)
+		return
+	end
 	local appliedLayout = layout
 	local fixedLayoutCount
 	if Helper.IsFixedLayout(layout) then
@@ -24393,6 +24401,10 @@ function CooldownPanels:UpdatePreviewIcons(panelId, countOverride)
 	local layout = panel.layout
 	local fixedLayout = Helper.IsFixedLayout(layout)
 	local layoutEditActive = self:IsPanelLayoutEditActive(panelId)
+	if self.HoverBuffPanel and self.HoverBuffPanel:IsEnabled(layout) then
+		self:UpdateRuntimeIcons(panelId)
+		return
+	end
 	local showTooltips = layout.showTooltips == true
 	local showKeybinds = layout.keybindsEnabled == true
 	local showIconTexture = layout.showIconTexture ~= false
@@ -25308,6 +25320,48 @@ function CooldownPanels:SetEntryStyleClipboardHotkeyFocus(frame, enabled, panelI
 	if frame.EnableKeyboard then frame:EnableKeyboard(enabled and not ((UnitAffectingCombat and UnitAffectingCombat("player")) or (InCombatLockdown and InCombatLockdown()))) end
 end
 
+function CooldownPanels:ApplyHoverBuffPanelSize(panelId, runtime, frame, layout)
+	local previousWidth = runtime._eqolCalculatedPanelWidth
+	runtime._eqolCalculatedPanelWidth = self.HoverBuffPanel:ApplySize(frame, layout)
+	if previousWidth ~= runtime._eqolCalculatedPanelWidth then self:QueueWidthLinkedPanels(panelId) end
+	frame:SetFrameStrata(Helper.NormalizeStrata(layout.strata, Helper.PANEL_LAYOUT_DEFAULTS.strata))
+	syncLayoutSelectionStrata(frame)
+	self:ApplyPanelPosition(panelId)
+end
+
+function CooldownPanels:UpdateHoverBuffRuntime(panelId, runtime, frame, panel, preview)
+	if not runtime.hoverBuffRuntime then
+		for _, icon in ipairs(frame.icons) do
+			cdp.RUNTIME.UpdateCooldownPingReceiver(icon, false)
+			cdp.RUNTIME.ClearIconSnapshot(icon)
+			self:HideEditorGhostIcon(icon)
+			if icon.entryId then CooldownPanels.ClearReadyGlowEntryState(panelId, icon.entryId, true) end
+			if icon.cooldown then
+				clearCooldownDoneState(icon.cooldown)
+				icon.cooldown:Clear()
+			end
+			CooldownPanels.StopAllIconGlows(icon)
+			setAssistedHighlight(icon, false)
+			icon.entryId = nil
+			icon._eqolRuntimeData = nil
+			icon:Hide()
+		end
+		ensureIconCount(frame, 0)
+		if self.Bars and self.Bars.RetireHoverBuffPanelBars then self.Bars.RetireHoverBuffPanelBars(runtime) end
+		if frame.editGrid then frame.editGrid:Hide() end
+		if self.Bars and self.Bars.SyncPanelWidthElement then self.Bars.SyncPanelWidthElement(panelId, runtime, nil) end
+		if runtime.entryToIcon then wipe(runtime.entryToIcon) end
+		if runtime.visibleEntries then wipe(runtime.visibleEntries) end
+		if runtime.visiblePowerSpells then wipe(runtime.visiblePowerSpells) end
+		runtime.visiblePowerSpellCount = 0
+		runtime.hoverBuffRuntime = true
+		self:RebuildSpellIndex()
+		clearRuntimeLayoutShapeCache(runtime)
+	end
+	self:ApplyHoverBuffPanelSize(panelId, runtime, frame, panel.layout)
+	return self.HoverBuffPanel:Configure(frame, panel, preview)
+end
+
 function CooldownPanels:UpdateRuntimeIcons(panelId)
 	local panel = self:GetPanel(panelId)
 	if not panel then return end
@@ -25319,6 +25373,7 @@ function CooldownPanels:UpdateRuntimeIcons(panelId)
 	local enabledPanels = shared and shared.enabledPanels
 	local eligible = layoutEditActive or enabledPanels and enabledPanels[panelId] or (not enabledPanels and panel.enabled ~= false and panelAllowsSpec(panel))
 	if not eligible then
+		if self.HoverBuffPanel then self.HoverBuffPanel:Deactivate(frame) end
 		if runtime._eqolHiddenByEligibility then return end
 		runtime._eqolHiddenByEligibility = true
 		runtime.visibleCount = 0
@@ -25350,6 +25405,19 @@ function CooldownPanels:UpdateRuntimeIcons(panelId)
 	runtime._eqolHiddenByEligibility = nil
 	panel.layout = panel.layout or Helper.CopyTableShallow(Helper.PANEL_LAYOUT_DEFAULTS)
 	local layout = panel.layout
+	if self.HoverBuffPanel then
+		if self.HoverBuffPanel:IsEnabled(layout) then
+			runtime.hoverBuffCount = self:UpdateHoverBuffRuntime(panelId, runtime, frame, panel, layoutEditActive)
+			layoutEditActive = false
+		elseif runtime.hoverBuffRuntime then
+			self.HoverBuffPanel:Deactivate(frame)
+			self.HoverBuffPanel:RestoreEntryIcons(frame)
+			runtime.hoverBuffRuntime, runtime.hoverBuffCount = nil, nil
+			self:RebuildSpellIndex()
+			frame._eqolHoverBuffSizeApplied = nil
+			clearRuntimeLayoutShapeCache(runtime)
+		end
+	end
 	local fixedLayout = Helper.IsFixedLayout(layout)
 	local resolvedLayout = CooldownPanels.ResolveRuntimeLayout(runtime, frame, layout)
 	local showTooltips = resolvedLayout and resolvedLayout.showTooltips
@@ -25494,7 +25562,7 @@ function CooldownPanels:UpdateRuntimeIcons(panelId)
 	end
 	for _, entryId in ipairs(order) do
 		local entry = panel.entries and panel.entries[entryId]
-		if entry then
+		if entry and (not runtime.hoverBuffCount or frame._eqolHoverBuffPanel and frame._eqolHoverBuffPanel.ordinarySlots[entryId]) then
 			local entryLayout = layout
 			if fixedLayout then
 				local groupId = entry.fixedGroupId
@@ -26839,6 +26907,14 @@ function CooldownPanels:UpdateRuntimeIcons(panelId)
 		end
 	end
 
+	if runtime.hoverBuffCount and frame._eqolHoverBuffPanel then
+		for index = 1, count do
+			local icon = frame.icons[index]
+			local data = visible[index]
+			if icon and data then self.HoverBuffPanel:MountEntryIcon(frame._eqolHoverBuffPanel, icon, data.entryId) end
+		end
+	end
+
 	for i = count + 1, #frame.icons do
 		local icon = frame.icons[i]
 		if icon then
@@ -26885,7 +26961,7 @@ function CooldownPanels:UpdateRuntimeIcons(panelId)
 		runtime._eqolOccupiedSlotIndices = visibleSlotIndices
 	end
 	runtime._eqolLastLayoutEditActive = layoutEditActive == true
-	runtime.visibleCount = visibleCount
+	runtime.visibleCount = runtime.hoverBuffCount or visibleCount
 	runtime.initialized = true
 end
 
@@ -27362,7 +27438,7 @@ function CooldownPanels:UpdatePanelMouseState(panelId)
 		end
 	end
 	if frame.editDropZone then
-		local showDropZone = layoutEditActive
+		local showDropZone = layoutEditActive and not runtime.hoverBuffRuntime
 		frame.editDropZone:SetShown(showDropZone)
 		if frame._eqolDropZoneMouseEnabled ~= showDropZone then
 			frame._eqolDropZoneMouseEnabled = showDropZone
@@ -27751,6 +27827,10 @@ function CooldownPanels:RefreshRuntimeEntry(panelId, entryId)
 	if not (panelId and entryId) then return fallback() end
 	if self:IsPanelLayoutEditActive(panelId) then return fallback() end
 	local panel = self:GetPanel(panelId)
+	if self.HoverBuffPanel and self.HoverBuffPanel:IsEnabled(panel and panel.layout) then
+		self:RequestPanelRefresh(panelId)
+		return true
+	end
 	local entry = panel and panel.entries and panel.entries[entryId] or nil
 	if not entry then return fallback() end
 	if entry.type ~= "CDM_AURA" then return fallback() end
@@ -27910,6 +27990,7 @@ function CooldownPanels:RefreshPanel(panelId, framePrepared)
 	if panel.enabled == false and not layoutEditActive then
 		local runtime = self.runtime and self.runtime[panelId]
 		local frame = runtime and runtime.frame
+		if self.HoverBuffPanel then self.HoverBuffPanel:Deactivate(frame) end
 		if runtime then runtime.visibleCount = 0 end
 		if frame then
 			if frame.icons then
@@ -27959,6 +28040,7 @@ function CooldownPanels:HideAllRuntimePanels()
 	for panelId in pairs(root.panels) do
 		local runtime = allRuntime[panelId]
 		if runtime then
+			if self.HoverBuffPanel then self.HoverBuffPanel:Deactivate(runtime.frame) end
 			runtime.visibleCount = 0
 			runtime.visiblePowerSpellCount = 0
 			runtime._eqolHiddenByEligibility = true
@@ -28071,6 +28153,12 @@ end
 
 function CooldownPanels:RefreshPanelForCurrentEditContext(panelId, refreshEditor)
 	local runtime = getRuntime(panelId)
+	local panel = self:GetPanel(panelId)
+	if self.HoverBuffPanel and (runtime.hoverBuffRuntime or self.HoverBuffPanel:IsEnabled(panel and panel.layout)) then
+		self:RefreshPanel(panelId)
+		if refreshEditor and self:IsEditorOpen() then self:RefreshEditor() end
+		return
+	end
 	if CooldownPanels:IsPanelLayoutEditActive(panelId) then
 		if runtime then clearRuntimeLayoutShapeCache(runtime) end
 		CooldownPanels:UpdateRuntimeIcons(panelId)
@@ -29071,7 +29159,7 @@ function CooldownPanels:PrepareLayoutPanelStandaloneSettings(panelId)
 				get = function() return Helper.NormalizeLayoutMode(layout.layoutMode, Helper.PANEL_LAYOUT_DEFAULTS.layoutMode) end,
 				set = function(_, value) applyEditLayout(panelId, "layoutMode", value) end,
 				generator = function(_, root)
-					for _, option in ipairs(Helper.LayoutModeOptions) do
+					for _, option in ipairs(Helper.GetLayoutModeOptions()) do
 						root:CreateRadio(
 							option.label,
 							function() return Helper.NormalizeLayoutMode(layout.layoutMode, Helper.PANEL_LAYOUT_DEFAULTS.layoutMode) == option.value end,
@@ -31646,6 +31734,7 @@ function cdp.ENTRY.ApplyVisibleSpellRuntime(panelId, runtime, icon, data, resolv
 		setGlow(icon, data.interruptGlow == true, data.readyGlowColor, "EQOL_INTERRUPT", data.interruptGlowCondition, 0, 1, data.readyGlowStyle, data.readyGlowInset, data.glowPixelOptions)
 	end
 
+	if runtime.hoverBuffRuntime then CooldownPanels.HoverBuffPanel:ApplyEntryStyle(runtime.frame._eqolHoverBuffPanel, icon, data.entryId) end
 	return true
 end
 
@@ -31705,6 +31794,7 @@ function cdp.ENTRY.RefreshSpellVisualEntries(spellId, mode)
 					icon.texture:SetTexture(data.icon)
 					Helper.UpdateIconCraftingQuality(icon)
 					cdp.RUNTIME.WriteTextureSnapshot(icon._eqolRuntimeSnapshot, data)
+					if panelRuntime.hoverBuffRuntime then CooldownPanels.HoverBuffPanel:ApplyEntryStyle(panelRuntime.frame._eqolHoverBuffPanel, icon, entryId) end
 				end
 				refreshed = true
 			end
@@ -31878,6 +31968,7 @@ function cdp.ENTRY.ApplyVisibleItemRuntime(panelId, runtime, icon, data, resolve
 		setGlow(icon, simpleGlowEnabled, simpleGlowColor, "EQOL_SIMPLE", nil, nil, nil, simpleGlowStyle, simpleGlowInset, data.glowPixelOptions)
 	end
 
+	if runtime.hoverBuffRuntime then CooldownPanels.HoverBuffPanel:ApplyEntryStyle(runtime.frame._eqolHoverBuffPanel, icon, data.entryId) end
 	return true
 end
 

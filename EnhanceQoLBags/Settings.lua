@@ -32,32 +32,26 @@ end
 
 local function registerConfigCenterSettings()
 	if addon.Bags.variables.configCenterSettingsBuilt then return end
-	if not (addon.functions and addon.functions.SettingsCreateExpandableSection and addon.functions.SettingsCreateCheckbox) then return end
+	local bagsInventorySection = addon.SettingsLayout and addon.SettingsLayout.bagsInventorySection
+	if not (bagsInventorySection and addon.functions and addon.functions.SettingsCreateCheckbox) then return end
 
-	local bagsActivationSection = addon.SettingsLayout and addon.SettingsLayout.bagsActivationSection
-	if not bagsActivationSection then
-		bagsActivationSection = addon.functions.SettingsCreateExpandableSection(nil, {
-			name = L["configCenterBags"] or "Bags",
-			configPageKey = "BagsModule",
-			description = L["bagsModuleEnableDesc"],
-			iconKey = "bags",
-			modernCategory = "general",
-			modernOnly = true,
-			order = 30,
-			expanded = false,
-			colorizeTitle = false,
-		})
-		addon.SettingsLayout.bagsActivationSection = bagsActivationSection
-	end
-
-	addon.functions.SettingsCreateText(nil, L["bagsModuleEnableDesc"], { parentSection = bagsActivationSection })
-
+	addon.functions.SettingsCreateSectionHeader(nil, L["bagsModuleHeader"], {
+		id = "bags-module-header",
+		parentSection = bagsInventorySection,
+		groupID = "bag",
+	})
+	addon.functions.SettingsCreateInlineHint(nil, L["bagsModuleHint"], {
+		id = "bags-module-hint",
+		parentSection = bagsInventorySection,
+		groupID = "bag",
+	})
 	addon.functions.SettingsCreateCheckbox(nil, {
 		var = "enableBagsModule",
-		text = L["bagsModuleEnable"] or "Enable Bags module",
+		text = L["bagsModuleEnable"] or "Enable Bags",
 		desc = L["bagsModuleEnableDesc"] or "Opt-in replacement for the default bag window. Disabling after it was enabled takes full effect after a UI reload.",
 		default = false,
-		parentSection = bagsActivationSection,
+		parentSection = bagsInventorySection,
+		groupID = "bag",
 		get = function()
 			return addon.db and addon.db.enableBagsModule == true
 		end,
@@ -170,6 +164,16 @@ local BASIC_VISIBLE_PAGE_IDS = {
 
 local function getSettings()
 	return addon.GetSettings and addon.GetSettings() or addon.DB.settings or {}
+end
+
+local function hasAuctionSales()
+	return Bags.GetAuctionSales ~= nil and Bags.GetAuctionSales() ~= nil
+end
+
+local function setAuctionValueOption(key, value)
+	getSettings()[key] = value == true
+	Bags.functions.RefreshAuctionValue(true)
+	Bags.functions.RefreshAuctionValueSettings()
 end
 
 local function getActiveCategoryMode()
@@ -1834,6 +1838,12 @@ refreshFooterPage = function(page, settings)
 	end
 	page.ShowCurrencies:SetChecked(settings.showCurrencies)
 	page.ShowFooterSlotSummary:SetChecked(settings.showFooterSlotSummary)
+	if page.ShowAuctionValue then
+		page.ShowAuctionValue:SetChecked(settings.showAuctionValue == true)
+		page.ShowAuctionValueDelta:SetChecked(settings.showAuctionValueDelta == true)
+		page.ShowAuctionValueDelta:SetEnabled(settings.showAuctionValue == true)
+		page.ShowAuctionValueDelta.Label:SetAlpha(settings.showAuctionValue == true and 1 or 0.65)
+	end
 	if page.FooterSummaryPaddingValue then
 		local padding = addon.GetFooterSummaryPadding and addon.GetFooterSummaryPadding() or 0
 		page.FooterSummaryPaddingValue:SetText(tostring(padding))
@@ -4667,6 +4677,17 @@ local function createFooterPage(parent)
 		end
 	)
 
+	if addon.variables.isForever then
+		page.ShowAuctionValue = createCheckbox(page, L["vendorAuctionBagValueTitle"], L["vendorAuctionBagValueDesc"], 0, -192, function(value)
+			setAuctionValueOption("showAuctionValue", value)
+			refreshConfigCenterLayout()
+		end)
+		page.ShowAuctionValueDelta = createCheckbox(page, L["vendorAuctionBagValueDelta"], L["vendorAuctionBagValueDeltaDesc"], 0, -222, function(value)
+			setAuctionValueOption("showAuctionValueDelta", value)
+			refreshConfigCenterLayout()
+		end)
+	end
+
 	local trackedCard = CreateFrame("Frame", nil, page, "BackdropTemplate")
 	trackedCard:SetPoint("TOPLEFT", page.ShowFooterSlotSummary, "BOTTOMLEFT", 0, -28)
 	trackedCard:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", -8, 0)
@@ -5239,6 +5260,14 @@ applyFooterPageMode = function(page)
 	end
 
 	local basicMode = isBasicCategoryMode()
+	if page.ShowAuctionValue then
+		local available = hasAuctionSales()
+		page.ShowAuctionValue:SetShown(available)
+		page.ShowAuctionValueDelta:SetShown(available)
+		page.ShowAuctionValue.Label:SetShown(available)
+		page.ShowAuctionValueDelta.Label:SetShown(available)
+		page.TrackedCharactersCard:SetPoint("TOPLEFT", available and page.ShowAuctionValueDelta or page.ShowFooterSlotSummary, "BOTTOMLEFT", 0, -28)
+	end
 	if page.TrackedCharactersCard then
 		page.TrackedCharactersCard:SetShown(not basicMode)
 	end
@@ -6240,6 +6269,63 @@ local function registerModernBagsSettings()
 end
 
 registerModernBagsSettings()
+
+function Bags.functions.RefreshAuctionValueSettings()
+	local frame = settingsState.frame
+	local footer = frame and frame.Pages.footer
+	if footer and footer:IsVisible() then refreshFooterPage(footer, getSettings()) end
+end
+
+function Bags.functions.RegisterAuctionValueSettings()
+	local app = addon.ConfigApp
+	local anchor = app and app.controlsByID.vendorAuctionDateFormat
+	if not anchor or app.controlsByID.vendorAuctionBagFooter then return end
+	local visible = addon.functions.IsBagsModuleActive
+	app:RegisterControl(anchor.pageID, {
+		id = "vendorAuctionBagFooter",
+		newTagID = "vendorAuctionBagFooter",
+		groupID = anchor.groupID,
+		groupTitle = anchor.groupTitle,
+		type = "sectionheader",
+		label = L["configCenterBags"] .. " · " .. L["settingsCategoryFooter"],
+		headerStyle = "subtle",
+		trackCustomized = false,
+		order = anchor.order + 0.1,
+		visibleWhen = visible,
+	})
+	app:RegisterControl(anchor.pageID, {
+		id = "vendorAuctionBagFooterValue",
+		newTagID = "vendorAuctionBagFooterValue",
+		groupID = anchor.groupID,
+		groupTitle = anchor.groupTitle,
+		type = "toggle",
+		label = L["vendorAuctionBagValueTitle"],
+		description = L["vendorAuctionBagValueDesc"],
+		default = false,
+		order = anchor.order + 0.2,
+		visibleWhen = visible,
+		isEnabled = hasAuctionSales,
+		getValue = function() return getSettings().showAuctionValue == true end,
+		setValue = function(value) setAuctionValueOption("showAuctionValue", value) end,
+	})
+	app:RegisterControl(anchor.pageID, {
+		id = "vendorAuctionBagFooterDelta",
+		newTagID = "vendorAuctionBagFooterDelta",
+		groupID = anchor.groupID,
+		groupTitle = anchor.groupTitle,
+		type = "toggle",
+		label = L["vendorAuctionBagValueDelta"],
+		description = L["vendorAuctionBagValueDeltaDesc"],
+		default = false,
+		order = anchor.order + 0.3,
+		visibleWhen = visible,
+		isEnabled = function() return hasAuctionSales() and getSettings().showAuctionValue == true end,
+		getValue = function() return getSettings().showAuctionValueDelta == true end,
+		setValue = function(value) setAuctionValueOption("showAuctionValueDelta", value) end,
+	})
+end
+
+Bags.functions.RegisterAuctionValueSettings()
 
 function addon.RefreshSettingsFrame(pageID, refreshAll)
 	local frame = settingsState.frame

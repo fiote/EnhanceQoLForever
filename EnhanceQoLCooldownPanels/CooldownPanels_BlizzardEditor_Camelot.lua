@@ -59,6 +59,11 @@ local function getPanel(panelId)
 	return root and root.panels and root.panels[normalizeId(panelId)] or nil
 end
 
+local function isHoverBuffPanel(panel)
+	local hover = CooldownPanels.HoverBuffPanel
+	return panel and hover and hover:IsEnabled(panel.layout)
+end
+
 local function isFixedLayoutPanel(panel)
 	return panel and Helper.IsFixedLayout and Helper.IsFixedLayout(panel.layout) or false
 end
@@ -423,22 +428,6 @@ local function createEditorHelpButton(frame)
 	helpButton:SetNormalTexture("Interface\\common\\help-i")
 	helpButton:SetHighlightTexture("Interface\\common\\help-i")
 	if helpButton:GetHighlightTexture() then helpButton:GetHighlightTexture():SetAlpha(0.7) end
-	helpButton:SetScript("OnEnter", function(button)
-		if not GameTooltip then return end
-		GameTooltip:SetOwner(button, "ANCHOR_LEFT", -6, 0)
-		GameTooltip:ClearLines()
-		GameTooltip:AddLine(L["CooldownPanelEditorHelpTitle"] or (HELP_LABEL or "Help"), 1, 0.82, 0)
-		GameTooltip:AddLine(L["CooldownPanelEditorHelpIntro"] or "", 1, 1, 1, true)
-		GameTooltip:AddLine(" ", 1, 1, 1, true)
-		GameTooltip:AddLine(L["CooldownPanelEditorHelpStyleClipboard"] or "", 1, 1, 1, true)
-		GameTooltip:AddLine(" ", 1, 1, 1, true)
-		local auraHelpKey = CooldownPanels.AuraContainers and "CooldownPanelEditorHelpAuras121" or "CooldownPanelEditorHelpAuras"
-		GameTooltip:AddLine(L[auraHelpKey] or L["CooldownPanelEditorHelpAuras"] or "", 1, 1, 1, true)
-		GameTooltip:Show()
-	end)
-	helpButton:SetScript("OnLeave", function()
-		if GameTooltip then GameTooltip:Hide() end
-	end)
 	return helpButton
 end
 
@@ -753,7 +742,7 @@ end
 
 function Editor:SetSourceTileDesaturated(desaturated)
 	local tile = self.state.sourceTile
-	if tile and tile.icon and tile.icon.SetDesaturated then tile.icon:SetDesaturated(desaturated == true) end
+	if tile then setTextureDesaturated(tile.icon, desaturated == true or tile._eqolEntryTileDesaturated) end
 	if desaturated ~= true then self.state.sourceTile = nil end
 end
 
@@ -773,6 +762,11 @@ function Editor:MoveEntry(sourcePanelId, sourceEntryId, targetPanelId, beforeEnt
 	end
 	local entry = sourcePanel.entries[sourceEntryId]
 	if not entry then return end
+	if sourcePanel ~= targetPanel and isHoverBuffPanel(targetPanel)
+		and not CooldownPanels.HoverBuffPanel:CanAddEntry(targetPanel) then
+		self:CancelDrag()
+		return
+	end
 	if sourcePanel == targetPanel and tostring(beforeEntryId) == tostring(sourceEntryId) then
 		self.state.drag = nil
 		self:SetSourceTileDesaturated(false)
@@ -1207,6 +1201,7 @@ function Editor:LayoutCategory(category, panelId, panel, yOffset, filterText)
 		category.header.Name:SetText(title)
 	end
 	local isDisabled = panel.enabled == false
+	local hoverBuff = isHoverBuffPanel(panel)
 	local disabledColor = _G.DISABLED_FONT_COLOR or _G.GRAY_FONT_COLOR or NORMAL_FONT_COLOR
 	if category.header.SetTitleColor then
 		category.header:SetTitleColor(false, isDisabled and disabledColor or NORMAL_FONT_COLOR)
@@ -1218,8 +1213,8 @@ function Editor:LayoutCategory(category, panelId, panel, yOffset, filterText)
 		category.header.Name:SetTextColor(color:GetRGB())
 	end
 	if category.advancedLabel then
-		local showAdvancedLabel = not isDisabled and (isFixedLayoutPanel(panel) or Helper.IsBarLayout(panel and panel.layout))
-		category.advancedLabel:SetText(getAdvancedPanelLabel(panel))
+		local showAdvancedLabel = not isDisabled and (hoverBuff or isFixedLayoutPanel(panel) or Helper.IsBarLayout(panel.layout))
+		category.advancedLabel:SetText(hoverBuff and L["CooldownPanelHoverBuffMode"] or getAdvancedPanelLabel(panel))
 		category.advancedLabel:ClearAllPoints()
 		category.advancedLabel:SetPoint("CENTER", category.header, "CENTER", 0, 0)
 		if showAdvancedLabel then
@@ -1245,7 +1240,7 @@ function Editor:LayoutCategory(category, panelId, panel, yOffset, filterText)
 		for _, entryId in ipairs(panel.order or {}) do
 			local entry = panel.entries and panel.entries[entryId] or nil
 			if entry and (not CooldownPanels.ShouldShowEntryInPanelEditor or CooldownPanels:ShouldShowEntryInPanelEditor(panel, entry)) then
-				local name = getEntryName(entry)
+				local name = hoverBuff and entry.type == "CDM_AURA" and entry.hoverBuffLabel or getEntryName(entry)
 				local typeLabel = getEntryTypeLabel(entry)
 				local search = (tostring(name or "") .. " " .. tostring(typeLabel or "") .. " " .. tostring(entry.spellID or entry.itemID or entry.slotID or entry.macroID or entryId)):lower()
 				if not lowerFilter or search:find(lowerFilter, 1, true) then visibleEntries[#visibleEntries + 1] = { id = entryId, entry = entry } end
@@ -1268,11 +1263,18 @@ function Editor:LayoutCategory(category, panelId, panel, yOffset, filterText)
 			if isBarGroupPanel(panel) then tile:RegisterForDrag() else tile:RegisterForDrag("LeftButton") end
 			tile.panelId = panelId
 			tile.entryId = data.id
-			tile.icon:SetTexture(getEntryIcon(data.entry))
-			setTextureDesaturated(tile.icon, isDisabled)
+			local entry = data.entry
+			local hoverIcon = hoverBuff and tonumber(entry.hoverBuffIcon)
+			tile._eqolEntryTileDesaturated = isDisabled
+			tile.icon:SetTexture(hoverIcon and hoverIcon > 0 and hoverIcon or getEntryIcon(entry))
+			setTextureDesaturated(tile.icon, tile._eqolEntryTileDesaturated)
 			tile:SetAlpha(isDisabled and 0.45 or 1)
-			local entryLayout = CooldownPanels.GetEntryEffectiveLayout and CooldownPanels:GetEntryEffectiveLayout(panelId, data.entry, nil, panel) or panel.layout
-			updateAlertTypesOverlay(tile, data.entry, entryLayout)
+			if hoverBuff then
+				if tile.AlertTypesOverlay then tile.AlertTypesOverlay:Hide() end
+			else
+				local entryLayout = CooldownPanels.GetEntryEffectiveLayout and CooldownPanels:GetEntryEffectiveLayout(panelId, entry, nil, panel) or panel.layout
+				updateAlertTypesOverlay(tile, entry, entryLayout)
+			end
 			tile:Show()
 		end
 
@@ -1313,7 +1315,8 @@ function Editor:ShowEntryMenu(owner, panelId, entryId)
 	Api.MenuUtil.CreateContextMenu(owner, function(_, rootDescription)
 		rootDescription:SetTag("MENU_EQOL_COOLDOWN_PANEL_BLIZZARD_ENTRY")
 		rootDescription:CreateTitle(getEntryName(entry))
-		if entry.type ~= "MACRO" then
+		local hoverBuff = isHoverBuffPanel(panel)
+		if not hoverBuff and entry.type ~= "MACRO" then
 			rootDescription:CreateCheckbox(L["CooldownPanelGlowReady"] or "Glow when ready", function()
 				return entry.glowReady == true
 			end, function()
@@ -1322,7 +1325,7 @@ function Editor:ShowEntryMenu(owner, panelId, entryId)
 			end)
 		end
 		local soundEnabledField
-		if CooldownPanels.GetEntrySoundConfig then
+		if not hoverBuff and CooldownPanels.GetEntrySoundConfig then
 			_, soundEnabledField = CooldownPanels:GetEntrySoundConfig(entry)
 		end
 		if soundEnabledField then
@@ -1542,8 +1545,21 @@ function Editor:CreateFrame()
 	frame.addPanelButton:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -44, 4)
 	local addPanelIcon = CreateAtlasMarkup and CreateAtlasMarkup("communities-icon-addgroupplus", 16, 16, 0, -1) or "+"
 	frame.addPanelButton:SetText(string.format("%s %s", addPanelIcon, L["Add Panel"] or "Add Panel"))
-	frame.addPanelButton:SetScript("OnClick", function()
-		Editor:CreatePanelFromDropdown()
+	frame.addPanelButton:SetScript("OnClick", function(owner)
+		local presets = CooldownPanels.HoverBuffPreset
+		if not (presets and presets:IsAvailable() and _G.MenuUtil) then
+			Editor:CreatePanelFromDropdown()
+			return
+		end
+		_G.MenuUtil.CreateContextMenu(owner, function(_, menu)
+			menu:CreateButton(L["CooldownPanelNewPanel"], function() Editor:CreatePanelFromDropdown() end)
+			menu:CreateButton(L["CooldownPanelHoverBuffPresetRaid"], function()
+				local panelId = presets:CreatePanel()
+				if not panelId then return end
+				CooldownPanels:SelectPanel(panelId)
+				Editor:Refresh()
+			end)
+		end)
 	end)
 	frame.searchBox = frame.SearchBox
 	if frame.searchBox.Instructions then frame.searchBox.Instructions:SetText(_G.COOLDOWN_VIEWER_SETTINGS_SEARCH_INSTRUCTIONS or SEARCH) end
@@ -1607,6 +1623,7 @@ function Editor:CreateFrame()
 	end)
 	if frame.classDropdown.SetDefaultText then frame.classDropdown:SetDefaultText(getClassViewLabel()) end
 
+	CooldownPanels:AttachEditorGuide(frame)
 	self.frame = frame
 	return frame
 end
@@ -1639,6 +1656,7 @@ function Editor:Refresh()
 	frame.content:SetHeight(math.max(1, yOffset))
 	if frame.classDropdown and frame.classDropdown.SetDefaultText then frame.classDropdown:SetDefaultText(getClassViewLabel()) end
 	if frame.classDropdown and frame.classDropdown.GenerateMenu then frame.classDropdown:GenerateMenu() end
+	frame.editorGuide:Refresh()
 end
 
 function Editor:RefreshPanel(panelId)
@@ -1660,7 +1678,11 @@ function Editor:RefreshPanel(panelId)
 		end
 	end
 	frame.content:SetHeight(math.max(1, yOffset))
-	if not found then self:Refresh() end
+	if found then
+		frame.editorGuide:Refresh()
+	else
+		self:Refresh()
+	end
 end
 
 function Editor:RefreshEntryAlert(panelId, entryId)
@@ -1670,7 +1692,7 @@ function Editor:RefreshEntryAlert(panelId, entryId)
 	entryId = normalizeId(entryId)
 	local panel = panelId and getPanel(panelId) or nil
 	local entry = panel and panel.entries and panel.entries[entryId] or nil
-	if not entry then return false end
+	if not entry or isHoverBuffPanel(panel) then return false end
 	local entryLayout = CooldownPanels.GetEntryEffectiveLayout and CooldownPanels:GetEntryEffectiveLayout(panelId, entry, nil, panel) or panel.layout
 
 	for categoryIndex = 1, (frame.categories.active or 0) do

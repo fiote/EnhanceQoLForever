@@ -262,35 +262,9 @@ local function clearTooltipDerivedItemFlagsCache()
 end
 
 local function refreshHeaderControls()
-	if not state.frame then
-		return
+	if state.frame then
+		Bags.Toolbar.Attach(state.frame)
 	end
-
-	local frame = state.frame
-	local showCloseButton = addon.GetShowCloseButton == nil or addon.GetShowCloseButton()
-	if frame.CloseButton then
-		frame.CloseButton:ClearAllPoints()
-		frame.CloseButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -FRAME_PADDING + 4, -4)
-		frame.CloseButton:SetShown(showCloseButton)
-	end
-	if frame.SettingsButton then
-		frame.SettingsButton:ClearAllPoints()
-		if showCloseButton and frame.CloseButton then
-			frame.SettingsButton:SetPoint("RIGHT", frame.CloseButton, "LEFT", -4, 0)
-		else
-			frame.SettingsButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -FRAME_PADDING, -8)
-		end
-	end
-	if frame.BagSlotsButton then
-		frame.BagSlotsButton:ClearAllPoints()
-		frame.BagSlotsButton:SetPoint("RIGHT", frame.SettingsButton, "LEFT", -8, 0)
-	end
-	if frame.SearchBox and frame.Title and frame.SettingsButton then
-		frame.SearchBox:ClearAllPoints()
-		frame.SearchBox:SetPoint("TOPLEFT", frame.Title, "TOPRIGHT", 18, 2)
-		frame.SearchBox:SetPoint("TOPRIGHT", frame.BagSlotsButton and frame.BagSlotsButton:IsShown() and frame.BagSlotsButton or frame.SettingsButton, "TOPLEFT", -10, -1)
-	end
-	if Bags.Toolbar then Bags.Toolbar.Attach(frame) end
 end
 
 function state.refreshBankBagSlots(bankType)

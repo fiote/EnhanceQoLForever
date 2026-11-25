@@ -764,6 +764,8 @@ local function getDefaultGroupName(id) return format(tr("UFGroupHealerBuffEditor
 
 HB.GetDefaultGroupName = getDefaultGroupName
 
+HB.RECIPIENT_CLASSES = { "WARRIOR", "PALADIN", "HUNTER", "ROGUE", "PRIEST", "SHAMAN", "MAGE", "WARLOCK", "DRUID" }
+
 function HB.CreateDefaultGroup(id)
 	id = tostring(id or "1")
 	return {
@@ -835,6 +837,14 @@ local function normalizeGroup(group, id)
 	if type(group) ~= "table" then return nil end
 	group.id = tostring(group.id or id)
 	if group.name == nil or group.name == "" then group.name = getDefaultGroupName(group.id) end
+	if group.recipientClasses ~= nil then
+		local selected = type(group.recipientClasses) == "table" and group.recipientClasses or EMPTY
+		local classes = {}
+		for _, token in ipairs(HB.RECIPIENT_CLASSES) do
+			if selected[token] == true then classes[token] = true end
+		end
+		group.recipientClasses = next(classes) and classes or nil
+	end
 	group.style = normalizeStyle(group.style)
 	group.anchorPoint = normalizeAnchor(group.anchorPoint)
 	group.anchorOutside = group.anchorOutside == true
@@ -1143,14 +1153,17 @@ local function ruleAppliesToKind(rule, kind)
 	return false
 end
 
-local function compile(kind, cfg)
+local function compile(kind, cfg, recipientClass)
 	kind = normalizeKind(kind)
 	local placement = HB.EnsureConfig(cfg)
 	if not placement then return nil end
 	local generation = HB._kindGeneration[kind] or 0
 	local cachedByKind = HB._compiledByConfig[cfg]
-	local cached = cachedByKind and cachedByKind[kind]
-	if cached and cached.generation == generation then return cached end
+	local variants = cachedByKind and cachedByKind[kind]
+	if not variants or variants.generation ~= generation then variants = { generation = generation } end
+	local cacheKey = recipientClass or false
+	local cached = variants[cacheKey]
+	if cached then return cached end
 
 	local familiesById = {}
 	local spellToFamily = {}
@@ -1165,8 +1178,8 @@ local function compile(kind, cfg)
 		kind = kind,
 		generation = generation,
 		placement = placement,
-		groupsById = placement.groupsById,
-		groupOrder = placement.groupOrder,
+		groupsById = {},
+		groupOrder = {},
 		rulesById = placement.rulesById,
 		ruleOrder = placement.ruleOrder,
 		ruleById = {},
@@ -1190,10 +1203,14 @@ local function compile(kind, cfg)
 		enabled = false,
 	}
 
-	for i = 1, #compiled.groupOrder do
-		local groupId = compiled.groupOrder[i]
-		local group = compiled.groupsById[groupId]
-		if group then
+	for i = 1, #placement.groupOrder do
+		local groupId = placement.groupOrder[i]
+		local group = placement.groupsById[groupId]
+		local classes = group and group.recipientClasses
+		if classes then compiled.hasRecipientClassFilter = true end
+		if group and (not recipientClass or not classes or classes[recipientClass]) then
+			compiled.groupsById[groupId] = group
+			compiled.groupOrder[#compiled.groupOrder + 1] = groupId
 			compiled.groupToRuleIds[groupId] = compiled.groupToRuleIds[groupId] or {}
 			compiled.groupToEnabledRuleIds[groupId] = compiled.groupToEnabledRuleIds[groupId] or {}
 			compiled.groupOrderByStyle[group.style][#compiled.groupOrderByStyle[group.style] + 1] = groupId
@@ -1203,7 +1220,7 @@ local function compile(kind, cfg)
 	for i = 1, #compiled.ruleOrder do
 		local ruleId = compiled.ruleOrder[i]
 		local rule = compiled.rulesById[ruleId]
-		if rule and ruleAppliesToKind(rule, kind) then
+		if rule and compiled.groupsById[rule.groupId] and ruleAppliesToKind(rule, kind) then
 			local familyId = rule.spellFamilyId
 			local groupId = rule.groupId
 			local family = HB.ResolveFamily(familyId, compiled)
@@ -1257,7 +1274,8 @@ local function compile(kind, cfg)
 
 	if placement.enabled == true and next(compiled.ruleById) and next(compiled.groupsById) and KIND_SET[kind] then compiled.enabled = true end
 	cachedByKind = cachedByKind or {}
-	cachedByKind[kind] = compiled
+	variants[cacheKey] = compiled
+	cachedByKind[kind] = variants
 	HB._compiledByConfig[cfg] = cachedByKind
 	return compiled
 end
@@ -1751,6 +1769,7 @@ end
 
 local function resetState(state)
 	if not state then return end
+	state.compiled = nil
 	wipeTable(state.auraFamilyByInstance)
 	wipeTable(state.familyCounts)
 	wipeTable(state.familyAura)
@@ -1818,7 +1837,7 @@ end
 function HB.ShouldSuppressRegularBuffAura(kind, cfg, aura, compiled, unit)
 	if aura == nil or cfg == nil then return false end
 	if HB.GetUnitAuraType(unit) ~= "HELPFUL" then return false end
-	compiled = compiled or compile(kind, cfg)
+	compiled = compiled or HB.GetCompiledForUnit(kind, cfg, unit)
 	if not (compiled and compiled.enabled) then return false end
 	local familyId = getFamilyForAura(compiled, aura, unit)
 	if familyId == nil then return false end
@@ -3364,13 +3383,13 @@ function HB.UpdateFromAuras(btn, updateInfo, cache, changed, isFullUpdate, compi
 	local kind = normalizeKind(btn._eqolGroupKind or KIND_PARTY)
 	local cfg = btn._eqolCfg
 	if not cfg then return end
-	local compiled = compiledOverride or compile(kind, cfg)
+	local unit = btn._eqolUnit
+	local compiled = compiledOverride or HB.GetCompiledForUnit(kind, cfg, unit)
 	if not (compiled and compiled.enabled) then
 		HB.ClearButton(btn)
 		return
 	end
 
-	local unit = btn._eqolUnit
 	-- The readable fallback only receives the helpful cache. Harmful placement
 	-- uses native containers, including their spell and caster filters.
 	if HB.GetUnitAuraType(unit) ~= "HELPFUL" then
@@ -3379,7 +3398,8 @@ function HB.UpdateFromAuras(btn, updateInfo, cache, changed, isFullUpdate, compi
 	end
 	ensureVisualLayersForUpdate(btn, st)
 
-	if isFullUpdate or not updateInfo then
+	if isFullUpdate or not updateInfo or state.compiled ~= compiled then
+		state.compiled = compiled
 		rebuildFamilyStateFromCache(state, compiled, cache, unit)
 		evaluateAllRulesAndGroups(state, compiled, unit)
 		wipeTable(state.changedFamilies)
@@ -3562,6 +3582,22 @@ end
 function HB.GetCompiled(kind, cfg)
 	if not cfg then return nil end
 	return compile(kind, cfg)
+end
+
+function HB.GetCompiledForUnit(kind, cfg, unit)
+	kind = normalizeKind(kind)
+	local compiled = HB.GetCompiled(kind, cfg)
+	if not (compiled and compiled.hasRecipientClassFilter and (kind == KIND_PARTY or kind == KIND_RAID)) then return compiled end
+
+	local classToken = ""
+	if UnitClass and not (issecretvalue and issecretvalue(unit)) and type(unit) == "string" and unit ~= "" then
+		local isPlayer = UnitIsPlayer and UnitIsPlayer(unit)
+		if not (issecretvalue and issecretvalue(isPlayer)) and isPlayer ~= false then
+			local _, token = UnitClass(unit)
+			if not (issecretvalue and issecretvalue(token)) and type(token) == "string" then classToken = token end
+		end
+	end
+	return compile(kind, cfg, classToken)
 end
 
 function HB.GetCompiledPositiveSpellIDs(compiled, suppressedOnly)

@@ -1033,6 +1033,8 @@ end
 function ChannelHistory:FindEQOLLine(eqolId)
 	if not eqolId or eqolId == "" then return nil end
 	self.runtime = self.runtime or {}
+	local viewLinks = self.ui and self.ui.logFrame and self.ui.logFrame.eqolLinks
+	if viewLinks and viewLinks[eqolId] then return viewLinks[eqolId] end
 	if self.runtime.eqolIndex and self.runtime.eqolIndex[eqolId] then return self.runtime.eqolIndex[eqolId] end
 	if not self.history then return nil end
 
@@ -1943,8 +1945,9 @@ local function collectLines(self, scope, realmKey, charKey, factionKey, searchNe
 
 	for _, cd in iterCharacters(scope, realmKey, charKey, factionKey) do
 		if cd and cd.channels then
-			for _, channelData in pairs(cd.channels) do
-				local count = getLineCount(channelData)
+			for channelKey, channelData in pairs(cd.channels) do
+				local filterKey = self:GetHistoryStreamFilter(channelKey)
+				local count = isEnabled(filterKey) and getLineCount(channelData) or 0
 				if count > 0 then
 					local stream = { bucket = channelData, count = count, index = count }
 					-- Seed the merge with metadata bounds. Old streams do not need
@@ -3342,6 +3345,8 @@ function ChannelHistory:RefreshLogView()
 	end
 
 	log:Clear()
+	local eqolLinks = {}
+	log.eqolLinks = eqolLinks
 	if self.ui.statusBar and self.ui.statusBar.text then self.ui.statusBar.text:SetText(_G.LOADING or _G.RETRIEVING_DATA or "") end
 	self:RunHistoryView(function()
 		return collectLines(self, scope, realmKey, charKey, factionKey, needle, maxUI)
@@ -3355,7 +3360,9 @@ function ChannelHistory:RefreshLogView()
 				log:AddMessage(string.format("|cff777777----- %s -----|r", currDate or ""), 1, 1, 1)
 				lastDate = currDate
 			end
-			log:AddMessage(formatLine(self, lines[i]), 1, 1, 1)
+			local line = lines[i]
+			if line.eqolId then eqolLinks[line.eqolId] = line end
+			log:AddMessage(formatLine(self, line), 1, 1, 1)
 			if i % 32 == 0 and addon.ChatHistoryStorage then addon.ChatHistoryStorage.ReadCheckpoint(false) end
 		end
 		log:ScrollToBottom()

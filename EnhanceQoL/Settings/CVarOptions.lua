@@ -63,7 +63,7 @@ local section = addon.functions.SettingsCreateExpandableSection(category, {
 	newTagID = "gameCVarOptions",
 })
 
-function M.Toggle(id, key, trueValue, falseValue)
+function M.Toggle(id, key, trueValue, falseValue, fallback)
 	addon.functions.SettingsCreateCheckbox(category, {
 		id = id,
 		var = id,
@@ -72,14 +72,14 @@ function M.Toggle(id, key, trueValue, falseValue)
 		trackCustomized = false,
 		text = L[id],
 		desc = L[id .. "Desc"],
-		get = function() return M.Read(key) == trueValue end,
-		func = function(enabled) M.Write(key, enabled and trueValue or falseValue) end,
+		get = fallback and fallback.get or function() return M.Read(key) == trueValue end,
+		func = fallback and fallback.set or function(enabled) M.Write(key, enabled and trueValue or falseValue) end,
 		default = function()
-			if not (C_CVar and C_CVar.GetCVarDefault) then return false end
+			if fallback or not (C_CVar and C_CVar.GetCVarDefault) then return false end
 			local ok, value = pcall(C_CVar.GetCVarDefault, key)
 			return ok and value == trueValue
 		end,
-		hiddenWhen = function() return M.Read(key) == nil end,
+		hiddenWhen = function() return not fallback and M.Read(key) == nil end,
 		parentSection = section,
 		newTagID = id,
 	})
@@ -110,7 +110,11 @@ function M.Preset(id, values)
 end
 
 addon.functions.SettingsCreateSectionHeader(category, L["General"], { parentSection = section, id = "gameCVarGeneral", headerStyle = "subtle" })
-M.Toggle("showInGameNavigation", "showInGameNavigation", "1", "0")
+local navigationFallback
+if addon.functions.CreateNavigationWaypointFallback and M.Read("showInGameNavigation") == nil then
+	navigationFallback = addon.functions.CreateNavigationWaypointFallback()
+end
+M.Toggle("showInGameNavigation", "showInGameNavigation", "1", "0", navigationFallback)
 M.Toggle("autoAddNewSpells", "AutoPushSpellToActionBar", "1", "0")
 M.Preset("slowCameraRotation", { cameraYawMoveSpeed = "60", cameraPitchMoveSpeed = "60" })
 M.Toggle("hideLuaErrorWindow", "scriptErrors", "0", "1")

@@ -15,6 +15,97 @@ H.COLOR_BLACK = { 0, 0, 0, 1 }
 H.COLOR_LEVEL = { 1, 0.85, 0, 1 }
 H.COLOR_HEALTH_DEFAULT = { 0, 0.8, 0, 1 }
 H.COLOR_YELLOW = { 1, 1, 0, 1 }
+H.GROUP_PORTRAIT_DECORATION_STYLE = "GOLD"
+H.GROUP_PORTRAIT_PREVIEW_KEYS = { party = "group:party", mt = "group:mt", ma = "group:ma" }
+H.PARTY_PET_PORTRAIT_ANCHORS = { LEFT = "RIGHT", RIGHT = "LEFT", TOP = "BOTTOM", BOTTOM = "TOP" }
+
+function H.GetPartyPetPortraitScale(cfg)
+	local portrait = cfg and cfg.petFrames and cfg.petFrames.portrait
+	return H.ClampNumber(type(portrait) == "table" and portrait.scale or nil, 0.5, 2, 1)
+end
+
+function H.SupportsGroupPortraitStyle(button)
+	return not button._eqolPartyPet and H.GROUP_PORTRAIT_PREVIEW_KEYS[button._eqolGroupKind] ~= nil
+end
+
+function H.IsGroupPortraitCastPreviewEnabled(kind)
+	local key = H.GROUP_PORTRAIT_PREVIEW_KEYS[kind]
+	return key ~= nil and not addon.variables.isTBC and addon.Aura.UFHelper.IsPortraitCastPreviewEnabled(key)
+end
+
+function H.SetGroupPortraitCastPreview(kind, enabled, refresh)
+	local key = H.GROUP_PORTRAIT_PREVIEW_KEYS[kind]
+	if key and not addon.variables.isTBC then addon.Aura.UFHelper.SetPortraitCastPreview(key, enabled, refresh) end
+end
+
+function H.WantsGroupPortraitCast(button, portrait)
+	return portrait and H.SupportsGroupPortraitStyle(button) and (portrait.castIcon == true or (portrait.castRing == true and not addon.variables.isTBC))
+end
+
+function H.RegisterGroupPortraitCastEvents(register)
+	local isEventValid = _G.C_EventUtils and _G.C_EventUtils.IsEventValid
+	for event in pairs(addon.Aura.UFHelper.PortraitCastEvents) do
+		if not isEventValid or isEventValid(event) then register(event) end
+	end
+end
+
+function H.HideGroupPortraitStyles(state)
+	state._groupPortraitCastRefreshUnit = nil
+	if state.portraitStyleBorder then state.portraitStyleBorder:Hide() end
+	if state.portraitDecoration then state.portraitDecoration:Hide() end
+	if state.portraitLevelFrame then state.portraitLevelFrame:Hide() end
+	if state.portraitDecorationLevel then state.portraitDecorationLevel:Hide() end
+	if state.portraitCastRing then state.portraitCastRing:Hide() end
+	local ufHelper = addon.Aura.UFHelper
+	if state.portraitSquareCastRing then ufHelper.HidePortraitSquareCast(state) end
+	if state.portraitPolygonCastRing then ufHelper.HidePortraitPolygonCast(state) end
+end
+
+function H.UpdateGroupPortraitStyles(button, state, unit, cfg, shape, detached, borderWithFrame, borderDef)
+	if not H.SupportsGroupPortraitStyle(button) then
+		H.HideGroupPortraitStyles(state)
+		return
+	end
+	local ufHelper = addon.Aura.UFHelper
+	local portrait = cfg.portrait or {}
+	local border = cfg.border or {}
+	local inherit = not portrait.border or portrait.border.inherit ~= false
+	local enabled = portrait.detachedBorderEnabled
+	if enabled == nil then enabled = not inherit or (detached and borderWithFrame) end
+	local frameBorderEnabled = border.enabled
+	if frameBorderEnabled == nil then frameBorderEnabled = borderDef and borderDef.enabled end
+	local legacyLayer
+	if enabled and (not inherit or (detached and frameBorderEnabled == true)) then
+		local legacyStrata
+		if inherit and UF.IsPortraitShapeBackdropBorderCompatible(shape) and (tonumber(portrait.borderLayer) or -1) < 0 then
+			-- The default inherited square border follows the existing group border stacking.
+			local oldLayer = math.max(-20, math.min(1000, tonumber(border.frameLevelOffset or borderDef and borderDef.frameLevelOffset) or 3))
+			legacyLayer = math.floor(oldLayer + (oldLayer >= 0 and 0.5 or -0.5))
+			legacyStrata = UF.GroupFrames.NormalizeFrameStrataToken(border.strata or (borderDef and borderDef.strata))
+		end
+		ufHelper.UpdatePortraitBorder(state, unit, cfg, border, borderDef, detached, shape, true, legacyLayer, legacyStrata)
+	elseif state.portraitStyleBorder then
+		state.portraitStyleBorder:Hide()
+	end
+	if portrait.classificationBorder == true or state.portraitDecoration then
+		ufHelper.UpdatePortraitDecoration(state, unit, cfg, true, H.GROUP_PORTRAIT_DECORATION_STYLE)
+	end
+	if portrait.decorationLevel == true or state.portraitLevelFrame then ufHelper.UpdatePortraitLevel(state, unit, cfg, true, legacyLayer) end
+	if not addon.variables.isTBC then
+		ufHelper.UpdatePortraitCastRing(state, unit, cfg, true, H.GROUP_PORTRAIT_PREVIEW_KEYS[button._eqolGroupKind])
+	end
+end
+
+function H.RefreshGroupPortraitCast(groupFrames, button, state, unit, getUnit)
+	groupFrames:UpdatePortrait(button, unit, state)
+	if state._groupPortraitCastRefreshUnit == unit then return end
+	state._groupPortraitCastRefreshUnit = unit
+	RunNextFrame(function()
+		if state._groupPortraitCastRefreshUnit ~= unit then return end
+		state._groupPortraitCastRefreshUnit = nil
+		if state._wantsGroupPortraitCast and getUnit(button) == unit and button:IsVisible() then groupFrames:UpdatePortrait(button, unit, state) end
+	end)
+end
 
 H.GROUP_ORDER = "1,2,3,4,5,6,7,8"
 H.ROLE_TOKENS = { "TANK", "HEALER", "DAMAGER" }

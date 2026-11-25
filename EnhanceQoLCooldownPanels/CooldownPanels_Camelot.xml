@@ -27,6 +27,7 @@
 	<Script file="CooldownPanels_EntrySetup.lua" />
 	<Script file="CooldownPanels_TalentPicker.lua" />
 	<Script file="CooldownPanels_BlizzardEditorConstants.lua" />
+	<Script file="CooldownPanels_EditorGuide.lua" />
 	<Include file="CooldownPanels_BlizzardEditor.xml" />
 	<Script file="CooldownPanels_BlizzardEditor_Camelot.lua" />
 	<Script file="CooldownPanels_SpellGroupsEditor_Camelot.lua" />
@@ -36,5 +37,8 @@
 	<Script file="CooldownPanels_Bars.lua" />
 	<Script file="CooldownPanels_BarGroups.lua" />
 	<Script file="CooldownPanels_AuraContainers.lua" />
+	<Script file="CooldownPanels_HoverBuffCount.lua" />
+	<Script file="CooldownPanels_HoverBuffPanel.lua" />
+	<Script file="CooldownPanels_HoverBuffPreset_Camelot.lua" />
 	<Script file="Init.lua" />
 </Ui>

@@ -514,7 +514,7 @@ local function getSelectedActiveProfileName()
 	return getValidProfileName(active) or getFallbackProfileName() or "Default"
 end
 
-local function setActiveProfileName(value)
+local function setActiveProfileName(value, reloadNow)
 	local name = getValidProfileName(value)
 	if not name then return false end
 	local guid = UnitGUID and UnitGUID("player")
@@ -522,8 +522,12 @@ local function setActiveProfileName(value)
 	EnhanceQoLDB.profileKeys = type(EnhanceQoLDB.profileKeys) == "table" and EnhanceQoLDB.profileKeys or {}
 	if addon.EditModeLib and addon.EditModeLib.InvalidateContext then addon.EditModeLib:InvalidateContext("profile") end
 	EnhanceQoLDB.profileKeys[guid] = name
-	addon.variables.requireReload = true
-	addon.functions.checkReloadFrame()
+	if reloadNow == true then
+		C_UI.Reload()
+	else
+		addon.variables.requireReload = true
+		addon.functions.checkReloadFrame()
+	end
 	return true
 end
 
@@ -1590,6 +1594,7 @@ end
 
 local function normalizeProfileStorage(profileData, meta)
 	if type(profileData) ~= "table" then return end
+	if addon and addon.functions and addon.functions.CleanupTotemActionBarProfile then addon.functions.CleanupTotemActionBarProfile(profileData) end
 	if type(profileData.mythicPlusTimer) == "table" and profileData.mythicPlusTimer.layoutMode == nil then profileData.mythicPlusTimer.layoutMode = "PANEL" end
 	if addon and addon.EditMode and addon.EditMode.MigrateProfileData then addon.EditMode:MigrateProfileData(profileData) end
 	if addon and addon.ContainerActions and addon.ContainerActions.MigrateProfileData then addon.ContainerActions:MigrateProfileData(profileData) end
@@ -1842,11 +1847,45 @@ addon.ProfileTools.ShowExportCodeDialog = showExportCodeDialog
 addon.ProfileTools.ShowImportCodeDialog = showImportCodeDialog
 addon.ProfileTools.DataExportErrorMessage = dataExportErrorMessage
 
+local createProfileOptions
+local function showCreateProfileDialog()
+	if not createProfileOptions then
+		local options = CreateFrame("Frame", nil, UIParent)
+		options:Hide()
+		local checkbox = CreateFrame("CheckButton", nil, options, "UICheckButtonTemplate")
+		checkbox:SetSize(26, 26)
+		checkbox:SetPoint("LEFT")
+		checkbox.Text:SetText(L["ProfileCreateActivate"])
+		local labelWidth = math.ceil(checkbox.Text:GetStringWidth())
+		checkbox:SetHitRectInsets(0, -labelWidth, 0, 0)
+		options:SetSize(26 + labelWidth, 26)
+		options.checkbox = checkbox
+
+		local function updateCheckbox()
+			local canActivate = not InCombatLockdown()
+			checkbox:SetEnabled(canActivate)
+			checkbox:SetChecked(canActivate and options.activate)
+			checkbox:SetAlpha(canActivate and 1 or 0.5)
+		end
+
+		checkbox:SetScript("OnClick", function(self) options.activate = not not self:GetChecked() end)
+		options:SetScript("OnShow", function(self)
+			self.activate = true
+			self:RegisterEvent("PLAYER_REGEN_DISABLED")
+			self:RegisterEvent("PLAYER_REGEN_ENABLED")
+			updateCheckbox()
+		end)
+		options:SetScript("OnEvent", updateCheckbox)
+		options:SetScript("OnHide", function(self) self:UnregisterAllEvents() end)
+		createProfileOptions = options
+	end
+	StaticPopup_Show("EQOL_CREATE_PROFILE", nil, nil, nil, createProfileOptions)
+end
+
 local data = {
 	listFunc = function() return buildSortedProfileList(profileOrderActive) end,
 	order = profileOrderActive,
 	text = L["Active profile"],
-	desc = L["ProfileActiveDesc"] or "Profile used by this character. This overrides the default profile.",
 	get = getSelectedActiveProfileName,
 	set = setActiveProfileName,
 	default = "Default",
@@ -1855,33 +1894,18 @@ local data = {
 	parentSection = expandable,
 }
 
-addon.functions.SettingsCreateInlineHint(profilesCategory, "|cff99e599" .. L["configCenterSubprofileHint"] .. "|r", { parentSection = expandable, id = "profile-hint-addon" })
+addon.functions.SettingsCreateInlineHint(profilesCategory, L["ProfileActiveDesc"], { parentSection = expandable, id = "profile-hint-addon" })
 addon.functions.SettingsCreateDropdown(profilesCategory, data)
 
-data = {
-	listFunc = function() return buildSortedProfileList(profileOrderGlobal) end,
-	order = profileOrderGlobal,
-	text = L["Global profile"],
-	desc = L["ProfileDefaultDesc"] or "Profile used for new characters that do not have an active profile assigned yet.",
-	get = getSelectedGlobalProfileName,
-	set = setGlobalProfileName,
-	default = "Default",
-	storage = false,
-	var = "profilefirststart",
-	parentSection = expandable,
-}
-
-addon.functions.SettingsCreateDropdown(profilesCategory, data)
-addon.functions.SettingsCreateText(profilesCategory, L["ProfileUseGlobalDesc"], { parentSection = expandable })
 addon.functions.SettingsCreateSectionHeader(profilesCategory, L["ProfileManagement"], { parentSection = expandable, headerStyle = "subtle", indent = 16 })
-addon.functions.SettingsCreateButton(profilesCategory, {
-	var = "profileApplyDefaultToAll",
-	text = L["ProfileApplyDefaultToAll"] or "Apply default profile to all characters",
-	desc = L["ProfileApplyDefaultToAllDesc"] or "Sets the active profile of every known character to the default profile. Reload required.",
-	func = showApplyDefaultProfileToAllPopup,
+data = {
+	var = "AddProfile",
+	text = L["ProfileName"],
+	func = showCreateProfileDialog,
 	parentSection = expandable,
 	indent = 16,
-})
+}
+addon.functions.SettingsCreateButton(profilesCategory, data)
 
 data = {
 	listFunc = function()
@@ -1971,14 +1995,27 @@ data = {
 
 addon.functions.SettingsCreateDropdown(profilesCategory, data)
 
+addon.functions.SettingsCreateInlineHint(profilesCategory, L["ProfileDefaultDesc"], { parentSection = expandable, id = "profile-hint-addon-default" })
 data = {
-	var = "AddProfile",
-	text = L["ProfileName"],
-	func = function() StaticPopup_Show("EQOL_CREATE_PROFILE") end,
+	listFunc = function() return buildSortedProfileList(profileOrderGlobal) end,
+	order = profileOrderGlobal,
+	text = L["Global profile"],
+	get = getSelectedGlobalProfileName,
+	set = setGlobalProfileName,
+	default = "Default",
+	storage = false,
+	var = "profilefirststart",
 	parentSection = expandable,
-	indent = 16,
 }
-addon.functions.SettingsCreateButton(profilesCategory, data)
+
+addon.functions.SettingsCreateDropdown(profilesCategory, data)
+addon.functions.SettingsCreateButton(profilesCategory, {
+	var = "profileApplyDefaultToAll",
+	text = L["ProfileApplyDefaultToAll"],
+	desc = L["ProfileApplyDefaultToAllDesc"] or "Sets the active profile of every known character to the default profile. Reload required.",
+	func = showApplyDefaultProfileToAllPopup,
+	parentSection = expandable,
+})
 
 addon.functions.SettingsCreateHeadline(profilesCategory, L["Export / Import"] or "Export / Import", { parentSection = expandable, profileTab = true, groupID = "profile-import-export", order = 20 })
 addon.functions.SettingsCreateSectionHeader(profilesCategory, L["AddOn"], { parentSection = expandable, headerStyle = "subtle", indent = 16 })
@@ -2108,6 +2145,7 @@ function addon.functions.initProfile()
 	StaticPopupDialogs["EQOL_CREATE_PROFILE"] = StaticPopupDialogs["EQOL_CREATE_PROFILE"]
 		or {
 			text = L["ProfileName"],
+			subText = L["ProfileCreateDefaults"],
 			hasEditBox = true,
 			EditBoxOnEscapePressed = addon.functions.CancelPopupOnEscape,
 			EditBoxOnEnterPressed = addon.functions.AcceptPopupOnEnter,
@@ -2128,9 +2166,11 @@ function addon.functions.initProfile()
 			OnAccept = function(self)
 				local editBox = self.editBox or self.GetEditBox and self:GetEditBox()
 				local id = trimAddonProfileName(editBox and editBox:GetText())
-				if id then
-					if not EnhanceQoLDB.profiles[id] or type(EnhanceQoLDB.profiles[id]) ~= "table" then EnhanceQoLDB.profiles[id] = {} end
-				end
+				if not id or getValidProfileName(id) then return end
+
+				EnhanceQoLDB.profiles[id] = {}
+				local options = self.insertedFrame
+				if options and options.checkbox:GetChecked() and not InCombatLockdown() then setActiveProfileName(id, true) end
 			end,
 		}
 end

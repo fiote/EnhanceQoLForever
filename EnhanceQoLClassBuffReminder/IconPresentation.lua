@@ -9,7 +9,42 @@ local M = {
 	color = "classBuffReminderExpiringGlowColor",
 	time = "classBuffReminderShowTimeLeft",
 	count = "classBuffReminderShowItemCount",
+	keybind = "classBuffReminderShowKeybinds",
 	defaultColor = { r = 1, g = 0.5, b = 0, a = 1 },
+}
+local KEYBIND_TEXT = "classBuffReminderKeybindText"
+local KEYBIND_ANCHORS = {
+	{ value = "TOPLEFT", label = L["Top Left"], justify = "LEFT", x = 2, y = -2 },
+	{ value = "TOP", label = L["Top"], justify = "CENTER", x = 0, y = -2 },
+	{ value = "TOPRIGHT", label = L["Top Right"], justify = "RIGHT", x = -2, y = -2 },
+	{ value = "LEFT", label = L["Left"], justify = "LEFT", x = 2, y = 0 },
+	{ value = "CENTER", label = L["Center"], justify = "CENTER", x = 0, y = 0 },
+	{ value = "RIGHT", label = L["Right"], justify = "RIGHT", x = -2, y = 0 },
+	{ value = "BOTTOMLEFT", label = L["Bottom Left"], justify = "LEFT", x = 2, y = 2 },
+	{ value = "BOTTOM", label = L["Bottom"], justify = "CENTER", x = 0, y = 2 },
+	{ value = "BOTTOMRIGHT", label = L["Bottom Right"], justify = "RIGHT", x = -2, y = 2 },
+}
+local DEFAULT_KEYBIND_ANCHOR = "BOTTOMLEFT"
+local keybindAnchorByPoint = {}
+for _, anchor in ipairs(KEYBIND_ANCHORS) do keybindAnchorByPoint[anchor.value] = anchor end
+local KEYBIND_EVENTS = {
+	ACTIONBAR_PAGE_CHANGED = true, ACTIONBAR_SLOT_CHANGED = true, UPDATE_BINDINGS = true,
+	UPDATE_BONUS_ACTIONBAR = true, UPDATE_OVERRIDE_ACTIONBAR = true, UPDATE_VEHICLE_ACTIONBAR = true,
+	UPDATE_POSSESS_BAR = true, UPDATE_MACROS = true, GAME_PAD_ACTIVE_CHANGED = true,
+}
+local KEYBIND_INVALIDATION_EVENTS = {
+	PLAYER_ENTERING_WORLD = true, SPELLS_CHANGED = true, UPDATE_SHAPESHIFT_FORM = true,
+	PLAYER_SPECIALIZATION_CHANGED = true, ACTIVE_TALENT_GROUP_CHANGED = true,
+}
+local ACTION_BARS = {
+	{ "ActionButton", "ACTIONBUTTON", "MainActionBar" },
+	{ "MultiBarBottomLeftButton", "MULTIACTIONBAR1BUTTON", "MultiBarBottomLeft" },
+	{ "MultiBarBottomRightButton", "MULTIACTIONBAR2BUTTON", "MultiBarBottomRight" },
+	{ "MultiBarRightButton", "MULTIACTIONBAR3BUTTON", "MultiBarRight" },
+	{ "MultiBarLeftButton", "MULTIACTIONBAR4BUTTON", "MultiBarLeft" },
+	{ "MultiBar5Button", "MULTIACTIONBAR5BUTTON", "MultiBar5" },
+	{ "MultiBar6Button", "MULTIACTIONBAR6BUTTON", "MultiBar6" },
+	{ "MultiBar7Button", "MULTIACTIONBAR7BUTTON", "MultiBar7" },
 }
 
 function Reminder:GetIconRowDimensions(frame, iconSize, iconGap, scale)
@@ -34,11 +69,143 @@ local function plainNumber(value)
 	if issecretvalue and issecretvalue(value) then return nil end
 	return type(value) == "number" and value or nil
 end
+local function plainString(value)
+	if issecretvalue and issecretvalue(value) then return nil end
+	return type(value) == "string" and value or nil
+end
 local function defaultEnabled(key) return key == M.time or key == M.count end
 local function enabled(key)
 	local value = addon.db and addon.db[key]
 	if value == nil then return defaultEnabled(key) end
 	return value == true
+end
+
+local function effectiveSpellId(spellId)
+	if not spellId then return nil end
+	return (C_Spell and C_Spell.GetOverrideSpell and plainNumber(C_Spell.GetOverrideSpell(spellId))) or spellId
+end
+
+local function getMacroCastSpell(macroId)
+	if not (GetMacroBody and C_Spell and C_Spell.GetSpellInfo) then return nil end
+	local body = plainString(GetMacroBody(macroId))
+	if not body then return nil end
+	local castSpell
+	for rawLine in body:gmatch("[^\r\n]+") do
+		local line = rawLine:match("^%s*(.-)%s*$")
+		if line ~= "" and line:sub(1, 1) ~= "#" then
+			if castSpell then return nil end
+			local command, spell = line:match("^(%S+)%s+([^%[%];]+)$")
+			command = command and command:lower()
+			if not command or (command ~= "/cast" and command ~= _G.SLASH_CAST1 and command ~= _G.SLASH_CAST2) then return nil end
+			local info = C_Spell.GetSpellInfo(spell)
+			if issecretvalue and issecretvalue(info) then return nil end
+			castSpell = info and plainNumber(info.spellID)
+			if not castSpell then return nil end
+		end
+	end
+	return castSpell
+end
+
+local function getButtonKey(command)
+	local first, second = GetBindingKey(command)
+	first, second = plainString(first), plainString(second)
+	if not GetBindingAction then return first or second end
+	if first and plainString(GetBindingAction(first, true)) == command then return first end
+	if second and plainString(GetBindingAction(second, true)) == command then return second end
+end
+
+local function buildSpellKeybindLookup()
+	local spells, macros = {}, {}
+	if not (GetActionInfo and GetBindingKey and GetBindingText) then return spells end
+	for _, bar in ipairs(ACTION_BARS) do
+		for index = 1, NUM_ACTIONBAR_BUTTONS or 12 do
+			local name = bar[1] .. index
+			local button = _G[name]
+			if bar[1] == "ActionButton" and _G.GetActionButtonForID then
+				button = _G.GetActionButtonForID(index)
+				if button then name = button:GetName() or name end
+			end
+			local visible = button and button:IsVisible()
+			if issecretvalue and issecretvalue(visible) then visible = nil end
+			local slot = visible and (plainNumber(button.action) or plainNumber(button:GetAttribute("action")))
+			if slot and slot > 0 then
+				local kind, id = GetActionInfo(slot)
+				kind, id = plainString(kind), plainNumber(id)
+				if id and (kind == "spell" or kind == "macro") then
+					local key = getButtonKey(plainString(button.bindingAction) or plainString(button.commandName) or bar[2] .. index)
+						or getButtonKey("CLICK " .. name .. ":LeftButton")
+					if key then
+						local spellId = effectiveSpellId(kind == "spell" and id or getMacroCastSpell(id))
+						local lookup = kind == "spell" and spells or macros
+						if spellId and not lookup[spellId] then
+							local binding = plainString(GetBindingText(key, 1))
+							if binding and binding ~= "" then
+								local labels = addon.ActionBarLabels
+								if labels and labels.ShortenHotkeyText and not binding:find("|", 1, true) then binding = labels.ShortenHotkeyText(binding) end
+								lookup[spellId] = binding
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	for id, binding in pairs(macros) do
+		if not spells[id] then spells[id] = binding end
+	end
+	return spells
+end
+
+local function onActionBarVisibilityChanged()
+	if Reminder.eventsRegistered and Reminder.reminderKeybindEventsActive then
+		Reminder.reminderSpellKeybinds = nil
+		Reminder:RequestUpdate(false, 0, true)
+	end
+end
+
+local function hookActionBarVisibility()
+	Reminder.reminderKeybindBarHooks = Reminder.reminderKeybindBarHooks or {}
+	local function hook(frame)
+		if not (frame and frame.HookScript) or Reminder.reminderKeybindBarHooks[frame] then return end
+		frame:HookScript("OnShow", onActionBarVisibilityChanged)
+		frame:HookScript("OnHide", onActionBarVisibilityChanged)
+		Reminder.reminderKeybindBarHooks[frame] = true
+	end
+	hook(_G.MainMenuBar)
+	for _, bar in ipairs(ACTION_BARS) do hook(_G[bar[3]]) end
+end
+
+function Reminder:RefreshReminderKeybindEvents()
+	self.reminderSpellKeybinds = nil
+	if not self.eventsRegistered then return end
+	local active = enabled(M.keybind)
+	if (self.reminderKeybindEventsActive == true) == active then return end
+	self.reminderKeybindEventsActive = active
+	if active then hookActionBarVisibility() end
+	local eventUtils = _G.C_EventUtils
+	for event in pairs(KEYBIND_EVENTS) do
+		if not (eventUtils and eventUtils.IsEventValid) or eventUtils.IsEventValid(event) then
+			if active then self.eventFrame:RegisterEvent(event) else self.eventFrame:UnregisterEvent(event) end
+		end
+	end
+end
+
+function Reminder:HandleReminderKeybindEvent(event)
+	if not self.reminderKeybindEventsActive then return false end
+	if KEYBIND_EVENTS[event] then
+		self.reminderSpellKeybinds = nil
+		-- Action button paging and binding handlers must run before reading their slots.
+		self:RequestUpdate(false, 0, true)
+		return true
+	end
+	if KEYBIND_INVALIDATION_EVENTS[event] then self.reminderSpellKeybinds = nil end
+	if event == "PLAYER_ENTERING_WORLD" then hookActionBarVisibility() end
+	return false
+end
+
+function Reminder:GetReminderEntryKeybindSpell(entry)
+	if not entry or entry.itemId or entry.actionCallback or entry.actionPetSlot or entry.actionInventorySlot then return nil end
+	return plainNumber(entry.actionSpellId)
 end
 local function latest(a, b)
 	b = plainNumber(b)
@@ -203,7 +370,7 @@ local function textOutline(prefix)
 	return addon.functions.GetFontFlagsForStyle(textStyleValue(prefix, "Outline", addon.functions.GetGlobalFontStyleConfigKey()), "OUTLINE")
 end
 
-local function ensureText(target, key, point, options)
+local function ensureOverlayText(target, key, options)
 	local overlay = target._eqolReminderTextOverlay
 	if not overlay then
 		overlay = CreateFrame("Frame", nil, target, options and options.layoutRestricted and "DisableUntrustedLayoutScriptsTemplate" or nil)
@@ -211,8 +378,14 @@ local function ensureText(target, key, point, options)
 		overlay:EnableMouse(false)
 		target._eqolReminderTextOverlay = overlay
 	end
-	-- The glow host and effect each add eight levels above the icon.
-	overlay:SetFrameLevel((target:GetFrameLevel() or 0) + 20)
+	-- Keep text above the glow and both backdrop borders.
+	local level = (target:GetFrameLevel() or 0) + 20
+	local iconBorder = target.border
+	if iconBorder then level = math.max(level, iconBorder:GetFrameLevel() + 1) end
+	local border = Reminder.frame and Reminder.frame.border
+	if border then level = math.max(level, border:GetFrameLevel() + 1) end
+	overlay:SetFrameStrata(target:GetFrameStrata())
+	overlay:SetFrameLevel(level)
 	local text = target[key]
 	if not text then
 		text = overlay:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -220,9 +393,18 @@ local function ensureText(target, key, point, options)
 		text:SetShadowColor(0, 0, 0, 1)
 		target[key] = text
 	end
-	local prefix = key == "_eqolReminderTimeText" and "classBuffReminderTimeText" or "classBuffReminderItemCountText"
+	return text
+end
+
+local function ensureText(target, key, point, options)
+	local text = ensureOverlayText(target, key, options)
+	local isKeybind = key == "_eqolReminderKeybindText"
+	local prefix = isKeybind and KEYBIND_TEXT or (key == "_eqolReminderTimeText" and "classBuffReminderTimeText" or "classBuffReminderItemCountText")
+	local width = (options and options.width) or target:GetWidth() or 40
 	local size = textStyleNumber(prefix, "Size", 0, 0, 64)
-	if size == 0 then size = math.max(8, math.min(18, ((options and options.width) or target:GetWidth() or 40) * 0.28)) end
+	if size == 0 then
+		size = isKeybind and math.max(7, math.min(14, width * 0.22)) or math.max(8, math.min(18, width * 0.28))
+	end
 	local fallback = (addon.variables and addon.variables.defaultFont) or STANDARD_TEXT_FONT
 	local fontKey = textStyleValue(prefix, "Font", addon.functions.GetGlobalFontConfigKey())
 	local font = fallback
@@ -234,12 +416,44 @@ local function ensureText(target, key, point, options)
 	end
 	addon.functions.ApplyFontStyleShadow(text, textStyleValue(prefix, "Outline", addon.functions.GetGlobalFontStyleConfigKey()), "OUTLINE")
 	text:ClearAllPoints()
-	text:SetPoint(point, target, point,
-		(point == "BOTTOMRIGHT" and -2 or 0) + textStyleNumber(prefix, "OffsetX", 0, -100, 100),
-		(point == "TOP" and -2 or 2) + textStyleNumber(prefix, "OffsetY", 0, -100, 100))
 	local color = textStyleValue(prefix, "Color", {})
+	local offsetX = textStyleNumber(prefix, "OffsetX", 0, -100, 100)
+	local offsetY = textStyleNumber(prefix, "OffsetY", 0, -100, 100)
+	if isKeybind then
+		local anchor = keybindAnchorByPoint[textStyleValue(prefix, "Anchor", DEFAULT_KEYBIND_ANCHOR)] or keybindAnchorByPoint[DEFAULT_KEYBIND_ANCHOR]
+		text:SetPoint(anchor.value, target, anchor.value, anchor.x + offsetX, anchor.y + offsetY)
+		text:SetJustifyH(anchor.justify)
+		text:SetWidth(math.max(1, width - 4))
+		text:SetWordWrap(false)
+		if textStyleValue(prefix, "UseClassColor", false) then
+			local class = Reminder:GetClassToken()
+			color = (class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]) or color
+		end
+	else
+		text:SetPoint(point, target, point,
+			(point == "BOTTOMRIGHT" and -2 or 0) + offsetX, (point == "TOP" and -2 or 2) + offsetY)
+	end
 	text:SetTextColor(color.r or 1, color.g or 1, color.b or 1, color.a or 1)
-	return text
+	return text, offsetX, offsetY
+end
+
+function Reminder:UpdateReminderKeybindText(target, spellId, options)
+	local value
+	if enabled(M.keybind) then
+		if self.editModeActive then
+			value = "1"
+		elseif spellId then
+			self.reminderSpellKeybinds = self.reminderSpellKeybinds or buildSpellKeybindLookup()
+			value = self.reminderSpellKeybinds[effectiveSpellId(spellId)]
+		end
+	end
+	if value then
+		local text, offsetX, offsetY = ensureText(target, "_eqolReminderKeybindText", nil, options)
+		text:SetText(value)
+		return text._eqolSize, math.max(math.abs(offsetX), math.abs(offsetY))
+	elseif target._eqolReminderKeybindText then
+		target._eqolReminderKeybindText:SetText("")
+	end
 end
 
 function Reminder:UpdateReminderItemCountText(target, entry, options)
@@ -261,14 +475,21 @@ function Reminder:ApplyReminderFoodTint(icon, entry)
 	icon:SetVertexColor(1, missing and 0.2 or 1, missing and 0.2 or 1)
 end
 
-function Reminder:UpdateReminderIconPresentation()
+function Reminder:UpdateReminderIconPresentation(displaySpellId)
 	self:CancelIconPresentationTimer()
 	if not self.frame or not self.frame:IsShown() then return end
 	local targets = self:GetGlowTargets() or {}
 	local needsExpiration = enabled(M.time) or enabled(M.separate)
+	local showKeybind = enabled(M.keybind)
 	for _, target in ipairs(targets) do
 		local entry = target._eqolReminderInteractionEntry
-		self:ApplyReminderFoodTint(target == self.frame.iconHolder and self.frame.icon or target.icon, entry)
+		local holder = target == self.frame.iconHolder
+		self:ApplyReminderFoodTint(holder and self.frame.icon or target.icon, entry)
+		local spellId = showKeybind and self:GetReminderEntryKeybindSpell(entry)
+		-- The summary can show the provider's icon while its click action targets
+		-- a different missing buff. Only label the spell represented by the icon.
+		if holder and spellId and (not displaySpellId or effectiveSpellId(entry.spellId) ~= effectiveSpellId(displaySpellId)) then spellId = nil end
+		self:UpdateReminderKeybindText(target, spellId)
 		if self.editModeActive then
 			target._eqolReminderProgressExpiration = nil
 			target._eqolReminderWarningExpiration = needsExpiration and now() + 90 or nil
@@ -393,6 +614,7 @@ end
 function Reminder:SetIconPresentationSetting(key, value)
 	if not addon.db then return end
 	addon.db[key] = value
+	if key == M.keybind then self:RefreshReminderKeybindEvents() end
 	self:SetGlowPreviewForSetting(key)
 	self:StopAllGlowTargetsImmediate()
 	self:RequestUpdate(true)
@@ -411,6 +633,7 @@ function Reminder:RegisterIconPresentationSettings(cat, section)
 		{ key = M.separate, label = "ClassBuffReminderExpiringGlow" },
 		{ key = M.time, label = "ClassBuffReminderShowTimeLeft" },
 		{ key = M.count, label = "ClassBuffReminderShowItemCount" },
+		{ key = M.keybind, label = "ClassBuffReminderShowKeybinds" },
 	}) do
 		local key = control.key
 		addon.functions.SettingsCreateCheckbox(cat, {
@@ -436,62 +659,75 @@ function Reminder:RegisterIconPresentationSettings(cat, section)
 	})
 end
 
-local function appendTextStyleSettings(settings, SettingType, prefix, label, enabledKey)
-	local parent = "iconPresentation"
+local function appendPresentationTab(settings, SettingType, id, name, toggle)
+	local fields = {}
+	settings[#settings + 1] = {
+		name = name, kind = SettingType.Collapsible, id = id, defaultCollapsed = true,
+		navigationReset = function()
+			if not addon.db then return end
+			for _, field in ipairs(fields) do addon.db[field] = nil end
+			Reminder:SetIconPresentationSetting(toggle, nil)
+		end,
+	}
 	local function append(data, field, default)
-		data.parentId, data.navigationField, data.default = parent, prefix .. field, default
-		data.isEnabled = function() return enabled(enabledKey) end
-		data.get = data.get or function() return textStyleValue(prefix, field, default) end
-		data.set = function(_, value) Reminder:SetIconPresentationSetting(prefix .. field, value) end
+		data.parentId, data.navigationField, data.default = id, field, default
+		data.isEnabled = data.isEnabled or function() return enabled(toggle) end
+		data.get = data.get or function() return textStyleValue(field, "", default) end
+		data.set = data.set or function(_, value) Reminder:SetIconPresentationSetting(field, value) end
+		fields[#fields + 1] = field
 		settings[#settings + 1] = data
 	end
-	settings[#settings + 1] = { name = L[label], kind = SettingType.Divider, parentId = parent }
-	append({ name = L["Font"], kind = SettingType.Dropdown, values = textFontOptions }, "Font", "__EQOL_GLOBAL_FONT__")
+	return append
+end
+
+local function appendPresentationToggle(append, SettingType, toggle, label)
+	append({
+		name = L[label], tooltip = L[label .. "Desc"], kind = SettingType.Checkbox,
+		isEnabled = function() return true end, get = function() return enabled(toggle) end,
+	}, toggle, defaultEnabled(toggle))
+end
+
+local function appendTextTab(settings, SettingType, id, name, prefix, toggle, label)
+	local append = appendPresentationTab(settings, SettingType, id, name, toggle)
+	appendPresentationToggle(append, SettingType, toggle, label)
+	if toggle == M.keybind then
+		append({ name = L["Anchor"], kind = SettingType.Dropdown, values = KEYBIND_ANCHORS }, prefix .. "Anchor", DEFAULT_KEYBIND_ANCHOR)
+	end
+	append({ name = L["Font"], kind = SettingType.Dropdown, values = textFontOptions }, prefix .. "Font", "__EQOL_GLOBAL_FONT__")
 	append({ name = _G.FONT_SIZE, kind = SettingType.Slider, minValue = 0, maxValue = 64, valueStep = 1,
 		get = function() return textStyleNumber(prefix, "Size", 0, 0, 64) end,
-		formatter = function(value) return value == 0 and _G.DEFAULT or tostring(value) end }, "Size", 0)
+		formatter = function(value) return value == 0 and _G.DEFAULT or tostring(value) end }, prefix .. "Size", 0)
 	append({ name = L["Font outline"], kind = SettingType.Dropdown,
-		values = function() return addon.functions.GetFontStyleOptionList(true) end }, "Outline", "__EQOL_GLOBAL_FONT_STYLE__")
-	append({ name = L["Color"], kind = SettingType.Color, hasOpacity = true }, "Color", { r = 1, g = 1, b = 1, a = 1 })
+		values = function() return addon.functions.GetFontStyleOptionList(true) end }, prefix .. "Outline", "__EQOL_GLOBAL_FONT_STYLE__")
+	local color = { name = L[toggle == M.keybind and "Custom color" or "Color"], kind = SettingType.Color, hasOpacity = true }
+	if toggle == M.keybind then
+		append({ name = L["Use class color"], kind = SettingType.Checkbox }, prefix .. "UseClassColor", false)
+		color.isEnabled = function() return enabled(toggle) and not textStyleValue(prefix, "UseClassColor", false) end
+	end
+	append(color, prefix .. "Color", { r = 1, g = 1, b = 1, a = 1 })
 	for _, axis in ipairs({ "X", "Y" }) do
 		local field = "Offset" .. axis
 		append({ name = L["Offset " .. axis], kind = SettingType.Slider, minValue = -100, maxValue = 100, valueStep = 1,
-			get = function() return textStyleNumber(prefix, field, 0, -100, 100) end }, field, 0)
+			get = function() return textStyleNumber(prefix, field, 0, -100, 100) end }, prefix .. field, 0)
 	end
 end
 
 function Reminder:BuildIconPresentationEditModeSettings(SettingType)
-	local settings = { { name = L["ClassBuffReminderIconOverlays"], kind = SettingType.Collapsible, id = "iconPresentation", defaultCollapsed = true } }
-	for _, control in ipairs({
-		{ key = M.time, label = "ClassBuffReminderShowTimeLeft", parent = "iconPresentation" },
-		{ key = M.count, label = "ClassBuffReminderShowItemCount", parent = "iconPresentation" },
-	}) do
-		local key = control.key
-		settings[#settings + 1] = {
-			name = L[control.label], tooltip = L[control.label .. "Desc"], kind = SettingType.Checkbox, parentId = control.parent,
-			default = defaultEnabled(key), get = function() return enabled(key) end,
-			set = function(_, value) self:SetIconPresentationSetting(key, value == true) end,
-		}
-	end
-	appendTextStyleSettings(settings, SettingType, "classBuffReminderTimeText", "ClassBuffReminderShowTimeLeft", M.time)
-	appendTextStyleSettings(settings, SettingType, "classBuffReminderItemCountText", "ClassBuffReminderShowItemCount", M.count)
-	settings[#settings + 1] = { name = L["Glow"], kind = SettingType.Divider, parentId = "iconPresentation" }
-	settings[#settings + 1] = {
-		name = L["ClassBuffReminderExpiringGlow"], tooltip = L["ClassBuffReminderExpiringGlowDesc"], kind = SettingType.Checkbox, parentId = "iconPresentation",
-		default = defaultEnabled(M.separate), get = function() return enabled(M.separate) end,
-		set = function(_, value) self:SetIconPresentationSetting(M.separate, value == true) end,
-	}
-	settings[#settings + 1] = {
-		name = L["ClassBuffReminderExpiringGlowStyle"], kind = SettingType.Dropdown, parentId = "iconPresentation", default = "PULSING",
-		get = function() return self:GetExpiringGlowStyle() end,
+	local settings = {}
+	appendTextTab(settings, SettingType, "iconTime", L["mythicPlusTimerTimeLeft"], "classBuffReminderTimeText", M.time, "ClassBuffReminderShowTimeLeft")
+	appendTextTab(settings, SettingType, "iconStacks", L["Stacks"], "classBuffReminderItemCountText", M.count, "ClassBuffReminderShowItemCount")
+	appendTextTab(settings, SettingType, "iconKeybinds", L["CooldownPanelKeybindsHeader"], KEYBIND_TEXT, M.keybind, "ClassBuffReminderShowKeybinds")
+
+	local append = appendPresentationTab(settings, SettingType, "iconExpiryGlow", L["Glow"], M.separate)
+	appendPresentationToggle(append, SettingType, M.separate, "ClassBuffReminderExpiringGlow")
+	append({
+		name = L["ClassBuffReminderExpiringGlowStyle"], kind = SettingType.Dropdown,
+		get = function() return self:GetExpiringGlowStyle() end, values = styleOptions,
 		set = function(_, value) self:SetIconPresentationSetting(M.style, self.NormalizeGlowStyleForIconShape(value, self:GetIconShape())) end,
-		values = styleOptions, isEnabled = function() return enabled(M.separate) end,
-	}
-	settings[#settings + 1] = {
-		name = L["ClassBuffReminderExpiringGlowColor"], kind = SettingType.Color, parentId = "iconPresentation", default = M.defaultColor,
+	}, M.style, "PULSING")
+	append({
+		name = L["ClassBuffReminderExpiringGlowColor"], kind = SettingType.Color,
 		get = function() local r, g, b, a = self:GetExpiringGlowColor(); return { r = r, g = g, b = b, a = a } end,
-		set = function(_, value) self:SetIconPresentationSetting(M.color, value) end,
-		isEnabled = function() return enabled(M.separate) end,
-	}
+	}, M.color, M.defaultColor)
 	return settings
 end

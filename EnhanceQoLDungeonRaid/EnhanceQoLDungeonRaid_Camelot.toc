@@ -2,7 +2,7 @@
 ## X-EQOL-Flavor: forever
 ## Title: Enhance QoL Dungeon & Raid
 ## Author: R41Z0R
-## Version: 13.23.0
+## Version: 13.24.0
 ## Notes: Movable party and raid tools
 ## Dependencies: EnhanceQoL
 ## LoadOnDemand: 1

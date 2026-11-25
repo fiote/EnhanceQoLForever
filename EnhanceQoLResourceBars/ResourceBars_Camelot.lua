@@ -9741,6 +9741,14 @@ end
 
 ResourceBars.DEFAULT_HEALTH_WIDTH = RB.DEFAULT_HEALTH_WIDTH
 ResourceBars.DEFAULT_HEALTH_HEIGHT = RB.DEFAULT_HEALTH_HEIGHT
+function ResourceBars.StyleFirstStartManaPreview(bar, label)
+	local defaults = {}
+	bar:SetStatusBarTexture(resolveTexture(defaults))
+	configureSpecialTexture(bar, "MANA", defaults)
+	bar:SetStatusBarColor(getPowerBarColor("MANA"))
+	label:SetText(formatPercentDisplay(70, defaults))
+end
+
 ResourceBars.DEFAULT_POWER_WIDTH = RB.DEFAULT_POWER_WIDTH
 ResourceBars.DEFAULT_POWER_HEIGHT = RB.DEFAULT_POWER_HEIGHT or RB.DEFAULT_HEALTH_HEIGHT
 ResourceBars.STRATA_ORDER = RB.STRATA_ORDER

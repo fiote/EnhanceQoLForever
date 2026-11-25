@@ -4852,7 +4852,7 @@ function H.ResolvePortraitBorderColor(unit, style)
 	return color[1] or 0, color[2] or 0, color[3] or 0, color[4] or 0.8
 end
 
-function H.UpdatePortraitBorder(st, unit, cfg, borderCfg, borderDef, detached, shape, visible)
+function H.UpdatePortraitBorder(st, unit, cfg, borderCfg, borderDef, detached, shape, visible, defaultLayer, defaultStrata)
 	if not (st and st.portraitHolder) then return end
 	local UF = addon.Aura and addon.Aura.UF
 	local style = H.ResolvePortraitBorderStyle(cfg, borderCfg, borderDef)
@@ -4862,7 +4862,7 @@ function H.UpdatePortraitBorder(st, unit, cfg, borderCfg, borderDef, detached, s
 	local frame = st.portraitStyleBorder
 	local safeBorder = addon.functions and addon.functions.SetSafeBorder
 	local square = not UF or UF.IsPortraitShapeBackdropBorderCompatible(shape)
-	H.SetPortraitFrameLayer(frame, st, cfg.portrait or {}, "borderLayer", square and 1 or 0)
+	H.SetPortraitFrameLayer(frame, st, cfg.portrait or {}, "borderLayer", defaultLayer or (square and 1 or 0), defaultStrata)
 	local r, g, b, a = H.ResolvePortraitBorderColor(unit, style)
 	if safeBorder then
 		frame:ClearAllPoints()
@@ -4901,7 +4901,7 @@ H.PortraitDragonFrames = {
 H.PortraitDragonFrames.BRONZE = H.PortraitDragonFrames.SILVER
 H.PortraitDragonFrames.BRONZE_WINGED = H.PortraitDragonFrames.SILVER_WINGED
 
-function H.UpdatePortraitLevel(st, unit, cfg, visible)
+function H.UpdatePortraitLevel(st, unit, cfg, visible, borderLayerFallback)
 	if not (st and st.portraitHolder) then return end
 	local portrait = cfg.portrait or {}
 	local text = st.portraitDecorationLevel
@@ -4922,7 +4922,7 @@ function H.UpdatePortraitLevel(st, unit, cfg, visible)
 	end
 	st.portraitLevelFrame:SetFrameStrata(st.portraitHolder:GetFrameStrata())
 	st.portraitLevelFrame:SetFrameLevel(math.min(65535, st.portraitHolder:GetFrameLevel() + math.max(2,
-		H.GetPortraitLayerOffset(portrait, "borderLayer", 1), H.GetPortraitLayerOffset(portrait, "decorationLayer", 0),
+		H.GetPortraitLayerOffset(portrait, "borderLayer", borderLayerFallback or 1), H.GetPortraitLayerOffset(portrait, "decorationLayer", 0),
 		H.GetPortraitLayerOffset(portrait, "castRingLayer", 2)) + 1))
 	st.portraitLevelFrame:Show()
 	if not text then
@@ -4959,7 +4959,7 @@ function H.UpdatePortraitLevel(st, unit, cfg, visible)
 	text:Show()
 end
 
-function H.UpdatePortraitDecoration(st, unit, cfg, visible)
+function H.UpdatePortraitDecoration(st, unit, cfg, visible, defaultStyle)
 	if not (st and st.portraitHolder) then return end
 	local portrait = cfg.portrait or {}
 	local decoration = st.portraitDecoration
@@ -4976,7 +4976,7 @@ function H.UpdatePortraitDecoration(st, unit, cfg, visible)
 	end
 	H.SetPortraitFrameLayer(st.portraitDecorationFrame, st, portrait, "decorationLayer", 0)
 	if decoration then decoration:SetParent(st.portraitDecorationFrame) end
-	local style = portrait.decorationStyle or "AUTO"
+	local style = portrait.decorationStyle or defaultStyle or "AUTO"
 	if style == "AUTO" then
 		local classification = UnitClassification and UnitClassification(unit)
 		if issecretvalue and issecretvalue(classification) then classification = nil end
@@ -5113,9 +5113,9 @@ function H.GetPortraitLayerOffset(portrait, field, fallback)
 	return math.floor(math.max(0, math.min(20, value)))
 end
 
-function H.SetPortraitFrameLayer(frame, st, portrait, field, fallback)
-	frame:SetFrameStrata(st.portraitHolder:GetFrameStrata())
-	frame:SetFrameLevel(math.min(65535, st.portraitHolder:GetFrameLevel() + H.GetPortraitLayerOffset(portrait, field, fallback)))
+function H.SetPortraitFrameLayer(frame, st, portrait, field, fallback, defaultStrata)
+	frame:SetFrameStrata(defaultStrata or st.portraitHolder:GetFrameStrata())
+	frame:SetFrameLevel(math.max(0, math.min(65535, st.portraitHolder:GetFrameLevel() + H.GetPortraitLayerOffset(portrait, field, fallback))))
 end
 
 function H.GetPortraitCastColor(portrait, unit)
@@ -5245,6 +5245,13 @@ function H.UpdatePortraitSquareCast(st, unit, portrait, duration, remaining)
 	H.UpdatePortraitSquareCastProgress(border)
 	border:SetScript("OnUpdate", H.UpdatePortraitSquareCastProgress)
 	border:Show()
+end
+
+function H.ResolvePortraitRadialTexture(key)
+	if not key or key == "SOLID" then
+		return "Interface\\AddOns\\EnhanceQoLUnitFrames\\Media\\Portrait\\CastRingSolid.tga"
+	end
+	return H.resolveTexture(key)
 end
 
 -- Static polygon masks define the band. Native radial status bars render progress;
@@ -5453,7 +5460,7 @@ function H.UpdatePortraitPolygonCast(st, unit, portrait, duration, remaining, sh
 	for i = 1, border.segmentCount do
 		local segment = border.segments[i]
 		segment:SetFrameLevel(border:GetFrameLevel())
-		segment:SetStatusBarTexture(H.resolveTexture(portrait.castRingTexture or "SOLID"))
+		segment:SetStatusBarTexture(H.ResolvePortraitRadialTexture(portrait.castRingTexture))
 		segment:SetStatusBarColor(H.GetPortraitCastColor(portrait, unit))
 		local fill = segment:GetStatusBarTexture()
 		if fill ~= segment.maskedFill then
@@ -5472,7 +5479,7 @@ function H.UpdatePortraitPolygonCast(st, unit, portrait, duration, remaining, sh
 			mask:ClearAllPoints();mask:SetPoint("CENTER",border,"CENTER",0,0)
 			mask:SetSize(border.maskWidth*scale,border.maskHeight*scale)
 		end
-		segment.track:SetTexture(H.resolveTexture(portrait.castRingBackgroundTexture or "SOLID"))
+		segment.track:SetTexture(H.ResolvePortraitRadialTexture(portrait.castRingBackgroundTexture))
 		segment.track:SetVertexColor(background.r or background[1] or 0.08, background.g or background[2] or 0.06,
 			background.b or background[3] or 0.02, background.a or background[4] or 0.7)
 		for _,region in ipairs({fill,segment.track}) do
@@ -5494,11 +5501,11 @@ end
 
 -- Native duration objects drive round bars and polygon perimeter curves.
 -- No cast times or restricted percentages are inspected or calculated in Lua.
-function H.UpdatePortraitCastRing(st, unit, cfg, visible)
+function H.UpdatePortraitCastRing(st, unit, cfg, visible, previewKey)
 	if not (st and st.portraitHolder) then return end
 	local portrait = cfg.portrait or {}
 	local ring = st.portraitCastRing
-	local preview = H.GetPortraitCastPreview(unit)
+	local preview = visible == true and H.GetPortraitCastPreview(previewKey or unit)
 	local shape = st._portraitShape or portrait.shape
 	if visible ~= true or (portrait.castRing ~= true and not preview) or (shape ~= "ROUND" and shape ~= "SQUARE" and shape ~= "STAR" and shape ~= "HEXAGON") then
 		if ring then ring:Hide() end
@@ -5567,11 +5574,11 @@ function H.UpdatePortraitCastRing(st, unit, cfg, visible)
 	ring:SetSize(math.max(1, diameter), math.max(1, diameter))
 	ring:SetPoint("CENTER", st.portraitHolder, "CENTER", delves and (tonumber(portrait.decorationOffsetX) or 0) or 0,
 		delves and (tonumber(portrait.decorationOffsetY) or 0) or 0)
-	ring.track:SetTexture(H.resolveTexture(portrait.castRingBackgroundTexture or "SOLID"))
+	ring.track:SetTexture(H.ResolvePortraitRadialTexture(portrait.castRingBackgroundTexture))
 	local background = portrait.castRingBackgroundColor or { 0.08, 0.06, 0.02, 0.7 }
 	ring.track:SetVertexColor(background.r or background[1] or 0.08, background.g or background[2] or 0.06,
 		background.b or background[3] or 0.02, background.a or background[4] or 0.7)
-	ring:SetStatusBarTexture(H.resolveTexture(portrait.castRingTexture or "SOLID"))
+	ring:SetStatusBarTexture(H.ResolvePortraitRadialTexture(portrait.castRingTexture))
 	local fill = ring:GetStatusBarTexture()
 	fill:SetAllPoints(ring)
 	if not ring.fillMask then
@@ -5796,4 +5803,54 @@ function H.ConfigureAuraDurationBar(button, style, isDebuff, native, aura, unit)
 			update(self)
 		end or nil)
 	end
+end
+
+function H.CreateFirstStartPlayerPreview(frame)
+	local st = { frame = frame }
+	st.status = CreateFrame("Frame", nil, frame)
+	st.barGroup = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+	st.healthContainer = CreateFrame("Frame", nil, st.barGroup)
+	for _, key in ipairs({ "health", "power" }) do
+		local parent = key == "health" and st.healthContainer or st.barGroup
+		local bar = CreateFrame("StatusBar", nil, parent, "BackdropTemplate")
+		st[key] = bar
+		for _, side in ipairs({ "Left", "Center", "Right" }) do
+			st[key .. "Text" .. side] = bar:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+		end
+	end
+	st.nameText = st.status:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+	st.levelText = st.status:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+	return st
+end
+
+function H.UpdateFirstStartPlayerPreviewText(st, cfg, def)
+	for _, key in ipairs({ "health", "power" }) do
+		local settings = cfg[key]
+		local sampleValue = key == "health" and 7200 or 6800
+		local maximum = 10000
+		st[key]:SetMinMaxValues(0, maximum)
+		st[key]:SetValue(sampleValue)
+		for _, side in ipairs({ "Left", "Center", "Right" }) do
+			st[key .. "Text" .. side]:SetText(H.formatText(
+				settings["text" .. side], sampleValue, maximum, settings.useShortNumbers, sampleValue / maximum * 100, settings.textDelimiter
+			))
+		end
+	end
+	local status = cfg.status
+	local height = st.status:GetHeight()
+	local color = RAID_CLASS_COLORS and RAID_CLASS_COLORS.MAGE or HIGHLIGHT_FONT_COLOR
+	for _, key in ipairs({ "name", "level" }) do
+		local label = st[key .. "Text"]
+		local anchor = status[key .. "Anchor"] or (key == "name" and "LEFT" or "RIGHT")
+		local offset = status[key .. "Offset"] or def.status[key .. "Offset"]
+		H.applyFont(label, status.font, status[key .. "FontSize"] or status.fontSize, status.fontOutline)
+		label:ClearAllPoints()
+		local y = addon.Aura.UF.GetStatusVisualOffsetY(anchor, height, st._statusLayoutHeight)
+		label:SetPoint(anchor, st.status, anchor, offset.x, offset.y + y)
+		label:SetTextColor(color.r, color.g, color.b)
+	end
+	st.nameText:SetText("Mira")
+	st.nameText:SetShown(status.enabled ~= false)
+	st.levelText:SetText("60")
+	st.levelText:SetShown(status.levelEnabled ~= false)
 end

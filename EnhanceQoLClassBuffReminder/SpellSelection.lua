@@ -184,12 +184,24 @@ end
 
 function Reminder:IsClassBuffRowEnabled(row, class)
 	if row.trackerKey then return self:GetClassTrackerSetting(row.trackerKey, self.defaults[self.classTrackerKeys[row.trackerKey]], class) end
+	if row.itemId then
+		local definition = self:GetCustomBuffDefinition(class, row.itemId, true)
+		return definition and not definition.disabled
+	end
 	return not self:IsSpellReminderDisabled(row.spellIds[1], true)
 end
 
 function Reminder:SetClassBuffRowEnabled(row, class, enabled)
 	if row.trackerKey then return self:SetClassTrackerSetting(class, row.trackerKey, enabled) end
 	if not addon.db then return end
+	if row.itemId then
+		local definition = self:GetCustomBuffDefinition(class, row.itemId, true)
+		if definition then
+			definition.disabled = not enabled or nil
+			self:OnSettingChanged()
+		end
+		return
+	end
 	local disabled = addon.db.classBuffReminderDisabledSpells
 	if type(disabled) ~= "table" then disabled = {}; addon.db.classBuffReminderDisabledSpells = disabled end
 	local names = {}
@@ -238,6 +250,10 @@ function Reminder:GetClassBuffRows(class)
 	for _, id in ipairs(self.GetCustomBuffSpellIds and self:GetCustomBuffSpellIds(class) or {}) do
 		local info = C_Spell.GetSpellInfo(id)
 		rows[#rows + 1] = { spellIds = { id }, id = id, custom = true, label = (info and info.name or tostring(id)) .. " (" .. id .. ")", icon = info and info.iconID, kind = _G.PLAYER }
+	end
+	for _, id in ipairs(self.GetCustomBuffIds and self:GetCustomBuffIds(class, true) or {}) do
+		local name, icon = self:GetCustomBuffActionInfo(id, true)
+		rows[#rows + 1] = { itemId = id, custom = true, label = name and (name .. " (" .. id .. ")") or tostring(id), icon = icon, kind = L["Item"] }
 	end
 	local function tracker(key, label, icon)
 		rows[#rows + 1] = { trackerKey = key, label = label, icon = icon, kind = L["ClassBuffReminderTrackerMatrixTracker"] }
@@ -303,6 +319,10 @@ Reminder.legacyTrackerContentGetters = {}
 
 function Reminder:GetClassBuffRowContent(row, class)
 	class = class or self:GetClassToken()
+	if row.itemId then
+		local definition = self:GetCustomBuffDefinition(class, row.itemId, true)
+		return self.CopyTrackingContentSelection(definition and definition.content or self.CreateAllTrackingContentSelection())
+	end
 	if row.trackerKey then
 		local stored = addon.db and addon.db.classBuffReminderTrackerContent
 		local selection = stored and stored[class] and stored[class][row.trackerKey]
@@ -330,6 +350,14 @@ end
 
 function Reminder:SetClassBuffRowContent(row, class, selection)
 	if not addon.db then return end
+	if row.itemId then
+		local definition = self:GetCustomBuffDefinition(class, row.itemId, true)
+		if definition then
+			definition.content = self.NormalizeTrackingContentSelection(selection)
+			self:OnSettingChanged()
+		end
+		return
+	end
 	local key = row.trackerKey and "classBuffReminderTrackerContent" or "classBuffReminderSpellContent"
 	if type(addon.db[key]) ~= "table" then addon.db[key] = {} end
 	if type(addon.db[key][class]) ~= "table" then addon.db[key][class] = {} end

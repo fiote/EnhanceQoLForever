@@ -5467,9 +5467,20 @@ Bars.CleanupStaleRuntimeBarIcons = function(runtime, pass)
 	end
 end
 
+function Bars.IsHoverBuffLayout(layout)
+	local mode = CooldownPanels.HoverBuffPanel
+	return mode and mode:IsEnabled(layout)
+end
+
+function Bars.RetireHoverBuffPanelBars(runtime)
+	Bars.CleanupStaleRuntimeBarIcons(runtime)
+	runtime._eqolBarPanelWidth, runtime._eqolBarPanelHeight = nil, nil
+	if CooldownPanels.BarGroups then CooldownPanels.BarGroups.HideHandles(runtime) end
+end
+
 Bars._preparedPanelBarEntries = setmetatable({}, { __mode = "k" })
 function Bars.PrepareBarPanelEntries(panel)
-	if not (panel and Helper.IsBarLayout(panel.layout)) then return end
+	if not (panel and Helper.IsBarLayout(panel.layout)) or Bars.IsHoverBuffLayout(panel.layout) then return end
 	Helper.BindPanelBarEntries(panel)
 	for _, entry in pairs(panel.entries or {}) do
 		if not Bars._preparedPanelBarEntries[entry] or entry.barMode == nil then
@@ -5554,7 +5565,7 @@ end
 function Bars.ResolvePanelAnchorLength(layout, panelFrame, relativeFrame, anchor)
 	-- Keep stored matching settings for other layouts; side groups own their dimensions.
 	if CooldownPanels and CooldownPanels.BarGroups and CooldownPanels.BarGroups.Enabled(layout) then return nil end
-	if not Helper.IsBarLayout(layout) or not anchor or anchor.matchRelativeWidth ~= true
+	if Bars.IsHoverBuffLayout(layout) or not Helper.IsBarLayout(layout) or not anchor or anchor.matchRelativeWidth ~= true
 		or not relativeFrame or relativeFrame == UIParent or relativeFrame == panelFrame then return nil end
 	if anchor.relativeFrame == "EQOL_CooldownPanelsFakeCursor" then return nil end
 	local vertical = layout.barPanelOrientation ~= "HORIZONTAL"
@@ -5571,7 +5582,7 @@ function Bars.UpdatePanelAnchorSize(panelId, relativeFrame, anchor)
 	local panel = CooldownPanels:GetPanel(panelId)
 	local runtime = CooldownPanels.runtime and CooldownPanels.runtime[panelId]
 	if not (panel and runtime) then return end
-	local matching = Helper.IsBarLayout(panel.layout) and not (CooldownPanels.BarGroups and CooldownPanels.BarGroups.Enabled(panel.layout)) and anchor and anchor.matchRelativeWidth == true
+	local matching = not Bars.IsHoverBuffLayout(panel.layout) and Helper.IsBarLayout(panel.layout) and not (CooldownPanels.BarGroups and CooldownPanels.BarGroups.Enabled(panel.layout)) and anchor and anchor.matchRelativeWidth == true
 	local source = matching and relativeFrame ~= UIParent and relativeFrame ~= runtime.frame and relativeFrame or nil
 	local previous = runtime._eqolBarMatchFrame
 	if previous ~= source then
@@ -5599,6 +5610,7 @@ end
 -- remain in the existing bar renderer, including its native timer API path.
 function Bars.ApplyBarPanel(panelId, preview)
 	local panel = CooldownPanels:GetPanel(panelId)
+	if not panel or Bars.IsHoverBuffLayout(panel.layout) then return end
 	Bars.PrepareBarPanelEntries(panel)
 	local runtime = CooldownPanels.runtime and CooldownPanels.runtime[panelId]
 	local frame = runtime and runtime.frame
@@ -5684,10 +5696,9 @@ function Bars.ApplyBarPanel(panelId, preview)
 end
 
 local function applyBarsToPanel(panelId, preview)
-	local barPanel = CooldownPanels:GetPanel(panelId)
-	if barPanel and Helper.IsBarLayout(barPanel.layout) then return Bars.ApplyBarPanel(panelId, preview) end
-	local panel = CooldownPanels.GetPanel and CooldownPanels:GetPanel(panelId) or nil
-	if not panel then return end
+	local panel = CooldownPanels:GetPanel(panelId)
+	if not panel or Bars.IsHoverBuffLayout(panel.layout) then return end
+	if Helper.IsBarLayout(panel.layout) then return Bars.ApplyBarPanel(panelId, preview) end
 	local sharedRuntime = CooldownPanels.runtime
 	local runtime = sharedRuntime and sharedRuntime[panelId] or nil
 	local frame = runtime and runtime.frame or nil
@@ -8480,6 +8491,11 @@ Bars._eqolOriginalOpenLayoutEntryStandaloneMenu = Bars._eqolOriginalOpenLayoutEn
 function CooldownPanels:OpenLayoutEntryStandaloneMenu(panelId, entryId, anchorFrame, allowOutsideLayoutEdit)
 	local lib = addon.EditModeLib
 	if not (lib and lib.ShowStandaloneSettingsDialog) then return Bars._eqolOriginalOpenLayoutEntryStandaloneMenu(self, panelId, entryId, anchorFrame, allowOutsideLayoutEdit) end
+	local hover = self.HoverBuffPanel
+	local panel = hover and self:GetPanel(panelId)
+	if panel and hover:IsEnabled(panel.layout) then
+		return Bars._eqolOriginalOpenLayoutEntryStandaloneMenu(self, panelId, entryId, anchorFrame, allowOutsideLayoutEdit)
+	end
 
 	local originalShowStandaloneSettingsDialog = lib.ShowStandaloneSettingsDialog
 	lib.ShowStandaloneSettingsDialog = function(editModeLib, frame, options)

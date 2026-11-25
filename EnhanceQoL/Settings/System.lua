@@ -138,6 +138,17 @@ local utilitiesExpandable = addon.functions.SettingsCreateExpandableSection(cGen
 	colorizeTitle = false,
 })
 
+addon.functions.SettingsCreateButton(cGeneral, {
+	var = "firstStartGuide",
+	newTagID = "firstStartGuide",
+	text = L["FirstStepsTitle"],
+	buttonText = _G.OPEN or L["FirstStepsStart"],
+	desc = L["FirstStepsWelcomeBody"],
+	func = addon.functions.OpenFirstStartWizard,
+	storage = false,
+	parentSection = utilitiesExpandable,
+})
+
 addon.functions.SettingsCreateCheckbox(cGeneral, {
 	var = "autoUnwrapMounts",
 	text = L["autoUnwrapMounts"],

@@ -2,6 +2,14 @@ local addon = _G.EnhanceQoL
 local ChannelHistory = addon.ChatIM.ChannelHistory
 local S = addon.ChatHistoryStorage
 
+function ChannelHistory:GetHistoryStreamFilter(channelKey)
+	if channelKey == "MAIL" or channelKey == "TRADE" then return channelKey end
+	if type(channelKey) ~= "string" or not self.EVENT_FILTER_KEY then return end
+	-- Chat event buckets use the event name, optionally followed by a channel suffix.
+	local event = channelKey:match("^[^:]+")
+	return event and self.EVENT_FILTER_KEY["CHAT_MSG_" .. event]
+end
+
 function ChannelHistory:CancelHistoryView()
 	local runtime = self.runtime
 	local job = runtime and runtime.historyViewJob

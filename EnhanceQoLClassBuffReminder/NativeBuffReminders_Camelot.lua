@@ -121,9 +121,19 @@ function M.PublicNumber(value)
 	return type(value) == "number" and value or nil
 end
 
-function M.Text(self, state, definition, scale, size)
+function M.Text(self, state, definition, spellId, scale, size)
 	local visual = state.visual
-	local itemText, itemSize = self:UpdateReminderItemCountText(visual, definition.ordinaryEntry, { width = size, layoutRestricted = true })
+	local entry = definition.ordinaryEntry
+	local options = { width = size, layoutRestricted = true }
+	local keybindSpellId
+	if entry then
+		keybindSpellId = self:GetReminderEntryKeybindSpell(entry)
+	elseif definition.key ~= "FOREVER_CAMP" then
+		keybindSpellId = spellId
+	end
+	local keybindSize, keybindOffset = self:UpdateReminderKeybindText(visual, keybindSpellId, options)
+	local keybindPadding = keybindSize and math.max(0, keybindSize + 2 - size) + keybindOffset or 0
+	local itemText, itemSize = self:UpdateReminderItemCountText(visual, entry, options)
 	local text = visual.countText
 	if not text then
 		-- Match the ordinary X/Y text's parent and draw layer. Item quantities
@@ -134,16 +144,19 @@ function M.Text(self, state, definition, scale, size)
 		text:SetShadowColor(0, 0, 0, 1)
 		visual.countText = text
 	end
-	local entry = definition.ordinaryEntry
-	local missing, total = M.PublicNumber(entry and entry.countMissing), M.PublicNumber(entry and entry.countTotal)
-	local value = entry and entry.shortText
-	if issecretvalue and issecretvalue(value) then value = nil end
-	if missing and total and total > 0 then
-		value = string.format("%d/%d", math.max(0, math.floor(missing + 0.5)), math.max(0, math.floor(total + 0.5)))
-	elseif type(value) ~= "string" then
-		-- This static label describes only the player. Native clipping decides
-		-- whether it is visible; it must never imply a group-wide missing count.
-		value = (definition.providerClass or (definition.category and definition.category.group) or definition.key == "PERSONAL_BLESSING") and "1/1" or ""
+	local showXYText = self:ShouldShowIconCountText()
+	local value = ""
+	if showXYText then
+		local missing, total = M.PublicNumber(entry and entry.countMissing), M.PublicNumber(entry and entry.countTotal)
+		value = entry and entry.shortText
+		if issecretvalue and issecretvalue(value) then value = nil end
+		if missing and total and total > 0 then
+			value = string.format("%d/%d", math.max(0, math.floor(missing + 0.5)), math.max(0, math.floor(total + 0.5)))
+		elseif type(value) ~= "string" then
+			-- This static label describes only the player. Native clipping decides
+			-- whether it is visible; it must never imply a group-wide missing count.
+			value = (definition.providerClass or (definition.category and definition.category.group) or definition.key == "PERSONAL_BLESSING") and "1/1" or ""
+		end
 	end
 	local fontSize, outline, r, g, b, a, offsetX, offsetY = self:GetIconCountTextStyle()
 	fontSize = math.max(8, math.floor(fontSize * scale + 0.5))
@@ -159,7 +172,8 @@ function M.Text(self, state, definition, scale, size)
 	-- whose position follows restricted aura geometry.
 	local itemX = tonumber(addon.db.classBuffReminderItemCountTextOffsetX) or 0
 	local itemY = tonumber(addon.db.classBuffReminderItemCountTextOffsetY) or 0
-	return math.max(#value * fontSize + math.abs(offsetX) + math.abs(offsetY), #itemText * itemSize + math.abs(itemX) + math.abs(itemY))
+	local countPadding = showXYText and (#value * fontSize + math.abs(offsetX) + math.abs(offsetY)) or 0
+	return math.max(countPadding, #itemText * itemSize + math.abs(itemX) + math.abs(itemY), keybindPadding)
 end
 
 -- These sources supply an advance of one public step while an aura is missing,
@@ -268,7 +282,7 @@ function M.UpdateEntry(self, state, definition, spellId, ids, root, size, step)
 	state.visual.icon:SetTexture((definition.ordinaryEntry and definition.ordinaryEntry.icon) or C_Spell.GetSpellTexture(spellId))
 	self:ApplyReminderFoodTint(state.visual.icon, definition.ordinaryEntry)
 	self:ApplyIconShape(state.visual, state.visual.icon)
-	local textPadding = M.Text(self, state, definition, addon.db.classBuffReminderScale or self.defaults.scale, size)
+	local textPadding = M.Text(self, state, definition, spellId, addon.db.classBuffReminderScale or self.defaults.scale, size)
 	local fullPadding = math.max(padding, textPadding)
 	options.paddingLeft, options.paddingRight, options.paddingTop, options.paddingBottom = fullPadding, fullPadding, fullPadding, fullPadding
 	if not gate:Configure(options) then M.Release(state) return false end

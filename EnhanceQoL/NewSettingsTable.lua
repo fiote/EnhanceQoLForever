@@ -1,18 +1,19 @@
 local addonName, addon = ...
 
-addon.variables.NewVersionTableEQOL = {
-	-- 13.23.0
-	chatIMInfoFontSize = true,
-	DataPanel_microbar_iconClassColor = true,
-	DataPanel_microbar_showIconTooltips = true,
-	DataPanel_microbar_iconStyle = true,
-	DataPanel_microbar_iconColor = true,
-	DataPanel_microbar_iconGap = true,
-	Bags_categoriesEditor = true,
-	Bags_globalCategorySortReverse = true,
-}
+addon.variables.NewVersionTableEQOL = {}
+
+-- 13.24.0
+addon.variables.NewVersionTableEQOL.firstStartGuide = true
 
 if addon.variables.isForever and not addon.variables.isTBC then
-	-- 13.23.0
-	addon.variables.NewVersionTableEQOL.shaman_HideTotemActionBar = true
+	-- 13.24.0
+	addon.variables.NewVersionTableEQOL.shaman_TotemActionBarVisibility = true
+	addon.variables.NewVersionTableEQOL.vendorAuctionSales = true
+	addon.variables.NewVersionTableEQOL.vendorAuctionSalesSection = true
+	addon.variables.NewVersionTableEQOL.vendorAuctionBagFooter = true
+	addon.variables.NewVersionTableEQOL.vendorAuctionBagFooterValue = true
+	addon.variables.NewVersionTableEQOL.vendorAuctionBagFooterDelta = true
+	addon.variables.NewVersionTableEQOL.vendorAuctionPriceTooltip = true
+	addon.variables.NewVersionTableEQOL.vendorAuctionHistoryTooltip = true
+	addon.variables.NewVersionTableEQOL.vendorAuctionDateFormat = true
 end

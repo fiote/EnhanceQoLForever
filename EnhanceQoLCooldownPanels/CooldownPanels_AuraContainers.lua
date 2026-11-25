@@ -155,6 +155,11 @@ local function getAuraMaxFrameCount(entry)
 	return math.max(1, math.floor(tonumber(maxFrameCount) or 1))
 end
 
+function AuraContainers:GetHoverBuffSpellData(entry)
+	local _, includeSpellIDs, signature = getAuraSpellIDs(entry)
+	return includeSpellIDs, signature
+end
+
 local function resolveBarTexture(value)
 	if value == "SOLID" then return "Interface\\Buttons\\WHITE8x8" end
 	if LSM and LSM.Fetch and type(value) == "string" then
@@ -4351,13 +4356,17 @@ function CDMAuras:FindEntryByValue(panel, idValue)
 	local presetSpellID = auraPresets and auraPresets.GetPrimarySpellID and auraPresets:GetPrimarySpellID(presetKey) or nil
 	local spellID = tonumber(presetSpellID or type(idValue) == "table" and (idValue.auraSpellID or idValue.spellID) or idValue)
 	if not spellID or not panel or not panel.entries then return nil end
+	local hover = CooldownPanels.HoverBuffPanel
+	local ignoreHoverGroups = hover and hover:IsEnabled(panel.layout)
 	for entryId, entry in pairs(panel.entries) do
-		if presetKey and entry and entry.type == ENTRY_TYPE and entry.auraPresetKey == presetKey then return entryId, entry end
-		if auraPresets and auraPresets.EntryTracksSpellID and auraPresets:EntryTracksSpellID(entry, spellID) then return entryId, entry end
-		if entry and entry.type == ENTRY_TYPE then
-			local entryID = getAuraSpellID(entry)
-			local canonical = CooldownPanels.GetCanonicalSpellRankID
-			if entryID == spellID or canonical and entryID and canonical(CooldownPanels, entryID) == canonical(CooldownPanels, spellID) then return entryId, entry end
+		if entry and not (ignoreHoverGroups and entry.hoverBuffPresetKey) then
+			if presetKey and entry.type == ENTRY_TYPE and entry.auraPresetKey == presetKey then return entryId, entry end
+			if auraPresets and auraPresets.EntryTracksSpellID and auraPresets:EntryTracksSpellID(entry, spellID) then return entryId, entry end
+			if entry.type == ENTRY_TYPE then
+				local entryID = getAuraSpellID(entry)
+				local canonical = CooldownPanels.GetCanonicalSpellRankID
+				if entryID == spellID or canonical and entryID and canonical(CooldownPanels, entryID) == canonical(CooldownPanels, spellID) then return entryId, entry end
+			end
 		end
 	end
 	return nil

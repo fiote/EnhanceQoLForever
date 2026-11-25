@@ -94,6 +94,7 @@ function Picker:BuildCatalog()
 				description = string.format(L["CooldownPanelPickerInternalCooldown"], duration) })
 		end
 	end
+	if CP.HoverBuffPreset then CP.HoverBuffPreset:AppendPickerEntries(append) end
 	self:IndexPlayerSpells(append)
 	if CP.AuraContainers then self:IndexCDMAuras(append) end
 	for _, slot in ipairs(CP:GetSlotMenuEntries()) do
@@ -195,6 +196,7 @@ function Picker:IsAdded(row)
 		return true
 	end
 	if row.kind == "PRESET" then return CP.AuraPresets:FindEntry(panel, row.value) ~= nil end
+	if row.kind == "HOVER_BUFF_AURA" then return CP.HoverBuffPreset:FindEntry(panel, row.value) ~= nil end
 	if row.kind == "MACRO" then
 		for _, entry in pairs(panel.entries or {}) do
 			if entry.type == "MACRO" and tonumber(entry.macroID) == row.value then return true end
@@ -206,10 +208,14 @@ function Picker:IsAdded(row)
 end
 
 function Picker:Add(row)
-	if not self:CanEdit() or not CP:GetPanel(self.targetId) or self:IsAdded(row) then return false end
+	local panel = self:GetTarget(self.targetId)
+	if not self:CanEdit() or not panel or self:IsAdded(row) then return false end
+	if self.CanAddEntry and not self:CanAddEntry(panel) then return false end
 	local added
 	if row.kind == "TOTEMS_ALL" then
 		added = CP:AddAllTotemEntries(self.targetId)
+	elseif row.kind == "HOVER_BUFF_AURA" then
+		added = CP.HoverBuffPreset:AddEntry(self.targetId, row.value)
 	elseif row.kind == "PRESET" then
 		local stats = CP.AuraPresets:AddPreset(self.targetId, row.value)
 		added = stats and (stats.added > 0 or stats.adopted > 0)
@@ -238,7 +244,9 @@ function Picker:Add(row)
 end
 
 function Picker:AddByID()
-	if not self:CanEdit() then return false end
+	local panel = self:GetTarget(self.targetId)
+	if not self:CanEdit() or not panel then return false end
+	if self.CanAddEntry and not self:CanAddEntry(panel) then return false end
 	local frame = self.frame
 	local value = tonumber(frame.idInput:GetText())
 	if not value or value <= 0 or value ~= math.floor(value) then frame.status:SetText(L["CooldownPanelPickerInvalidID"]); return false end
@@ -268,6 +276,13 @@ function Picker:AppendTooltip(data)
 		GameTooltip:AddDoubleLine(L["CooldownPanelActivationOverlayReverse"], definition.activationOverlayReverse and L["Enabled"] or L["Off"])
 		GameTooltip:AddDoubleLine(L["CooldownPanelActivationOverlayDesaturate"], definition.activationOverlayDesaturate ~= false and L["Enabled"] or L["Off"])
 	end
+end
+
+function Picker:CanAddEntry(panel)
+	local hover = CP.HoverBuffPanel
+	if not (hover and hover:IsEnabled(panel.layout)) or hover:CanAddEntry(panel) then return true end
+	if self.frame then self.frame.status:SetText(string.format(L["CooldownPanelHoverBuffEntryLimit"], hover.maxEntries)) end
+	return false
 end
 
 function CP:ShowAddEntryDialog(panelId) return Picker:Open(panelId) end

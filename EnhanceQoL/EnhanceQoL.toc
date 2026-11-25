@@ -2,7 +2,7 @@
 ## X-EQOL-Flavor: forever
 ## Title: Enhance QoL Core
 ## Author: R41Z0R
-## Version: 13.23.0
+## Version: 13.24.0
 ## IconTexture: Interface\AddOns\EnhanceQoL\Icons\Icon.tga
 ## Category: Quality of Life
 ## X-Category: Quality of Life
@@ -60,6 +60,7 @@ Core\EditModeNavigation.lua
 Core\EditModeNavigationDefaults.lua
 Core\FeatureEditor.xml
 Core\FeatureEditor.lua
+Core\FirstStartWizard.lua
 Core\EntryPicker.lua
 Core\EditModeNavigationSmallFrames.lua
 Core\EditModeNavigationProfiles.lua

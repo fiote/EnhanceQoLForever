@@ -1196,7 +1196,7 @@ local function usesPerBarTextureSelection(cfg)
 	return tex == nil or tex == "" or tex == BAR_TEX_INHERIT
 end
 
-function GF.ResolveGroupPortraitConfig(cfg, kind)
+function GF.ResolveGroupPortraitConfig(cfg, kind, isPartyPet)
 	if kind == "raid" then return false, "LEFT", false, false, "PORTRAIT", "SQUARE" end
 	local def = (kind and DEFAULTS[kind]) or DEFAULTS.party or {}
 	local pdef = def and def.portrait or {}
@@ -1205,6 +1205,13 @@ function GF.ResolveGroupPortraitConfig(cfg, kind)
 	if enabled == nil then enabled = pdef.enabled end
 	local side = tostring(pcfg.side or pdef.side or "LEFT"):upper()
 	if side ~= "RIGHT" then side = "LEFT" end
+	if isPartyPet and cfg and cfg.petFrames then
+		local pet = cfg.petFrames.portrait
+		if type(pet) == "table" then
+			if type(pet.enabled) == "boolean" then enabled = pet.enabled end
+			if GFH.PARTY_PET_PORTRAIT_ANCHORS[pet.side] then side = pet.side end
+		end
+	end
 	local squareBackground = pcfg.squareBackground
 	if squareBackground == nil then squareBackground = pdef.squareBackground end
 	local borderWithFrame = pcfg.borderWithFrame
@@ -1225,7 +1232,7 @@ function GF.IsGroupPowerDetached(cfg, kind)
 	return detached == true
 end
 
-function GF.ResolveGroupPortraitDetachedConfig(cfg, kind)
+function GF.ResolveGroupPortraitDetachedConfig(cfg, kind, isPartyPet)
 	if kind ~= "party" then return false, 0, 0, nil end
 	local def = (kind and DEFAULTS[kind]) or DEFAULTS.party or {}
 	local pdef = def and def.portrait or {}
@@ -1234,7 +1241,20 @@ function GF.ResolveGroupPortraitDetachedConfig(cfg, kind)
 	if detached == nil then detached = pdef.detached end
 	local offset = pcfg.detachedOffset or EMPTY
 	local size = tonumber(pcfg.detachedSize or pdef.detachedSize)
-	return detached == true, tonumber(offset.x), tonumber(offset.y), size
+	local x, y = tonumber(offset.x), tonumber(offset.y)
+	if isPartyPet and cfg and cfg.petFrames then
+		local pet = cfg.petFrames.portrait
+		if type(pet) == "table" then
+			if type(pet.detached) == "boolean" then detached = pet.detached end
+			local side = pet.side
+			if detached == true and GFH.PARTY_PET_PORTRAIT_ANCHORS[side] then
+				return true, clampNumber(pet.sideX, -1000, 1000, 0), clampNumber(pet.sideY, -1000, 1000, 0), size, side
+			end
+			x = clampNumber(pet.x, -1000, 1000, x)
+			y = clampNumber(pet.y, -1000, 1000, y)
+		end
+	end
+	return detached == true, x, y, size
 end
 
 function GF.GetDefaultDetachedPortraitOffset(cfg, kind, frameWidth, frameHeight, portraitSize)
@@ -1304,6 +1324,14 @@ function GF.ApplyGroupPortraitSeparator(cfg, kind, st, portraitEnabled)
 	st.portraitSeparator:SetVertexColor(color[1] or 0, color[2] or 0, color[3] or 0, color[4] or 1)
 	st.portraitSeparator:ClearAllPoints()
 	local side = st._portraitSide or "LEFT"
+	if side == "TOP" or side == "BOTTOM" then
+		local edge = GFH.PARTY_PET_PORTRAIT_ANCHORS[side]
+		st.portraitSeparator:SetPoint(side .. "LEFT", st.portraitHolder, edge .. "LEFT", 0, 0)
+		st.portraitSeparator:SetPoint(side .. "RIGHT", st.portraitHolder, edge .. "RIGHT", 0, 0)
+		if Pixel and Pixel.SetHeight then Pixel.SetHeight(st.portraitSeparator, separatorSize, 1) else st.portraitSeparator:SetHeight(separatorSize) end
+		st.portraitSeparator:Show()
+		return
+	end
 	if side == "RIGHT" then
 		st.portraitSeparator:SetPoint("TOP", st.portraitHolder, "TOP", 0, 0)
 		st.portraitSeparator:SetPoint("BOTTOM", st.portraitHolder, "BOTTOM", 0, 0)
@@ -6724,7 +6752,11 @@ local function updateButtonConfig(self, cfg)
 	st._statusTextRenderCached = nil
 	st._wantsRangeFade = scfg and scfg.rangeFade and scfg.rangeFade.enabled ~= false
 	st._wantsDispelTint = resolveDispelIndicatorEnabled(cfg, self._eqolGroupKind or "party")
-	st._wantsPortrait = select(1, GF.ResolveGroupPortraitConfig(cfg, self._eqolGroupKind or "party"))
+	st._wantsPortrait = select(1, GF.ResolveGroupPortraitConfig(cfg, self._eqolGroupKind or "party", self._eqolPartyPet))
+	st._wantsGroupPortraitCast = st._wantsPortrait and GFH.WantsGroupPortraitCast(self, cfg.portrait)
+	st._wantsGroupPortraitLevel = st._wantsPortrait and GFH.SupportsGroupPortraitStyle(self) and cfg.portrait and cfg.portrait.decorationLevel == true
+	st._wantsGroupPortraitReaction = st._wantsPortrait and GFH.SupportsGroupPortraitStyle(self) and cfg.portrait and cfg.portrait.border
+		and cfg.portrait.border.inherit == false and cfg.portrait.border.colorMode ~= "CUSTOM"
 
 	local tooltipCfg = cfg.tooltip or {}
 	local tooltipDef = (DEFAULTS[self._eqolGroupKind or "party"] and DEFAULTS[self._eqolGroupKind or "party"].tooltip) or (DEFAULTS.party and DEFAULTS.party.tooltip) or {}
@@ -7264,10 +7296,11 @@ function GF:LayoutButton(self)
 	if dataBarPosition ~= "ABOVE" then dataBarPosition = "BELOW" end
 
 	local portraitCfg = cfg.portrait or EMPTY
-	local portraitEnabled, portraitSide, portraitSquareBackground, portraitBorderWithFrame, _, portraitShape = GF.ResolveGroupPortraitConfig(cfg, kind)
-	local portraitDetached, portraitDetachedX, portraitDetachedY, portraitDetachedSize = GF.ResolveGroupPortraitDetachedConfig(cfg, kind)
+	local portraitEnabled, portraitSide, portraitSquareBackground, portraitBorderWithFrame, _, portraitShape = GF.ResolveGroupPortraitConfig(cfg, kind, self._eqolPartyPet)
+	local portraitDetached, portraitDetachedX, portraitDetachedY, portraitDetachedSize, petPortraitSide = GF.ResolveGroupPortraitDetachedConfig(cfg, kind, self._eqolPartyPet)
 	portraitDetached = portraitEnabled and portraitDetached == true
-	local portraitBaseSize = max(1, portraitDetached and portraitDetachedSize or availH)
+	local portraitScale = self._eqolPartyPet and GFH.GetPartyPetPortraitScale(cfg) or 1
+	local portraitBaseSize = max(1, (portraitDetached and portraitDetachedSize or availH) * portraitScale)
 	local portraitSize = portraitEnabled and roundToEvenPixel(portraitBaseSize, scale) or 0
 	if portraitDetached and (portraitDetachedX == nil or portraitDetachedY == nil) then
 		local defaultPortraitX, defaultPortraitY = GF.GetDefaultDetachedPortraitOffset(cfg, kind, w, h, portraitSize)
@@ -7295,13 +7328,11 @@ function GF:LayoutButton(self)
 		end
 	end
 	local portraitSpace = (portraitEnabled and not portraitDetached) and (portraitSize + separatorSpace) or 0
-	local contentOffsetLeft = 0
-	local contentOffsetRight = 0
 	local layoutAnchor = GF.GetLayoutAnchorFrame(st, self) or self
-	if not portraitOutside then
-		contentOffsetLeft = (portraitEnabled and portraitSide == "LEFT") and portraitSpace or 0
-		contentOffsetRight = (portraitEnabled and portraitSide == "RIGHT") and portraitSpace or 0
-	end
+	local contentOffsetLeft = portraitInsideFrame and portraitSide == "LEFT" and portraitSpace or 0
+	local contentOffsetRight = portraitInsideFrame and portraitSide == "RIGHT" and portraitSpace or 0
+	local contentOffsetTop = portraitInsideFrame and portraitSide == "TOP" and portraitSpace or 0
+	local contentOffsetBottom = portraitInsideFrame and portraitSide == "BOTTOM" and portraitSpace or 0
 
 	local bottomDataBarSpace = dataBarEnabled and dataBarPosition == "BELOW" and dataBarSpace or 0
 	local topDataBarSpace = dataBarEnabled and dataBarPosition == "ABOVE" and dataBarSpace or 0
@@ -7309,13 +7340,8 @@ function GF:LayoutButton(self)
 
 	st.barGroup:ClearAllPoints()
 	if portraitInsideFrame and portraitSpace > 0 then
-		if portraitSide == "RIGHT" then
-			st.barGroup:SetPoint("TOPLEFT", self, "TOPLEFT", 0, 0)
-			st.barGroup:SetPoint("BOTTOMRIGHT", self, "BOTTOMRIGHT", portraitSpace, 0)
-		else
-			st.barGroup:SetPoint("TOPLEFT", self, "TOPLEFT", -portraitSpace, 0)
-			st.barGroup:SetPoint("BOTTOMRIGHT", self, "BOTTOMRIGHT", 0, 0)
-		end
+		st.barGroup:SetPoint("TOPLEFT", self, "TOPLEFT", -contentOffsetLeft, contentOffsetTop)
+		st.barGroup:SetPoint("BOTTOMRIGHT", self, "BOTTOMRIGHT", contentOffsetRight, -contentOffsetBottom)
 	else
 		st.barGroup:SetAllPoints(self)
 	end
@@ -7391,11 +7417,11 @@ function GF:LayoutButton(self)
 					st.dataBar:SetFrameLevel(GF.ClampFrameLevel((st.health:GetFrameLevel() or 0) + levelOffset))
 				end
 			elseif dataBarPosition == "ABOVE" then
-				st.dataBar:SetPoint("TOPLEFT", st.barGroup, "TOPLEFT", contentOffsetLeft, 0)
-				st.dataBar:SetPoint("TOPRIGHT", st.barGroup, "TOPRIGHT", -contentOffsetRight, 0)
+				st.dataBar:SetPoint("TOPLEFT", st.barGroup, "TOPLEFT", contentOffsetLeft, -contentOffsetTop)
+				st.dataBar:SetPoint("TOPRIGHT", st.barGroup, "TOPRIGHT", -contentOffsetRight, -contentOffsetTop)
 			else
-				st.dataBar:SetPoint("BOTTOMLEFT", st.barGroup, "BOTTOMLEFT", contentOffsetLeft, 0)
-				st.dataBar:SetPoint("BOTTOMRIGHT", st.barGroup, "BOTTOMRIGHT", -contentOffsetRight, 0)
+				st.dataBar:SetPoint("BOTTOMLEFT", st.barGroup, "BOTTOMLEFT", contentOffsetLeft, contentOffsetBottom)
+				st.dataBar:SetPoint("BOTTOMRIGHT", st.barGroup, "BOTTOMRIGHT", -contentOffsetRight, contentOffsetBottom)
 			end
 			if not dataBarDetached then
 				if st.dataBar.SetFrameStrata and st.barGroup.GetFrameStrata then st.dataBar:SetFrameStrata(st.barGroup:GetFrameStrata()) end
@@ -7412,8 +7438,8 @@ function GF:LayoutButton(self)
 	end
 
 	st.health:ClearAllPoints()
-	st.health:SetPoint("TOPLEFT", st.barGroup, "TOPLEFT", contentOffsetLeft, -topDataBarSpace)
-	st.health:SetPoint("BOTTOMRIGHT", st.barGroup, "BOTTOMRIGHT", -contentOffsetRight, healthBottomOffset)
+	st.health:SetPoint("TOPLEFT", st.barGroup, "TOPLEFT", contentOffsetLeft, -(topDataBarSpace + contentOffsetTop))
+	st.health:SetPoint("BOTTOMRIGHT", st.barGroup, "BOTTOMRIGHT", -contentOffsetRight, healthBottomOffset + contentOffsetBottom)
 	if st.tempMaxHealthLoss then
 		if st.tempMaxHealthLoss.GetParent and st.tempMaxHealthLoss:GetParent() ~= st.health then st.tempMaxHealthLoss:SetParent(st.health) end
 		st.tempMaxHealthLoss:ClearAllPoints()
@@ -7469,8 +7495,8 @@ function GF:LayoutButton(self)
 			st.power:SetFrameLevel(powerLevel)
 		end
 	else
-		st.power:SetPoint("BOTTOMLEFT", st.barGroup, "BOTTOMLEFT", contentOffsetLeft, bottomDataBarSpace)
-		st.power:SetPoint("BOTTOMRIGHT", st.barGroup, "BOTTOMRIGHT", -contentOffsetRight, bottomDataBarSpace)
+		st.power:SetPoint("BOTTOMLEFT", st.barGroup, "BOTTOMLEFT", contentOffsetLeft, bottomDataBarSpace + contentOffsetBottom)
+		st.power:SetPoint("BOTTOMRIGHT", st.barGroup, "BOTTOMRIGHT", -contentOffsetRight, bottomDataBarSpace + contentOffsetBottom)
 		if st.power.SetFrameStrata and st.barGroup.GetFrameStrata then st.power:SetFrameStrata(st.barGroup:GetFrameStrata()) end
 		if st.power.SetFrameLevel and st.health.GetFrameLevel then st.power:SetFrameLevel(GF.ClampFrameLevel((st.health:GetFrameLevel() or 0) + 1)) end
 	end
@@ -7519,7 +7545,11 @@ function GF:LayoutButton(self)
 			end
 			st.portraitHolder:ClearAllPoints()
 			if portraitDetached then
-				st.portraitHolder:SetPoint("CENTER", self, "CENTER", portraitDetachedX, portraitDetachedY)
+				local point = GFH.PARTY_PET_PORTRAIT_ANCHORS[petPortraitSide] or "CENTER"
+				st.portraitHolder:SetPoint(point, self, petPortraitSide or "CENTER", portraitDetachedX, portraitDetachedY)
+			elseif portraitSide == "TOP" or portraitSide == "BOTTOM" then
+				local holderY = portraitOutside and holderOffset or -holderOffset
+				st.portraitHolder:SetPoint("CENTER", holderParent, portraitSide, 0, portraitSide == "TOP" and holderY or -holderY)
 			elseif portraitSide == "RIGHT" then
 				st.portraitHolder:SetPoint("CENTER", holderParent, "RIGHT", holderX, 0)
 			else
@@ -7565,7 +7595,7 @@ function GF:LayoutButton(self)
 			if st.portraitBg then st.portraitBg:Hide() end
 			st.portraitHolder:Hide()
 		end
-		local detachedPortraitBorderEnabled = portraitDetached and portraitBorderWithFrame and frameBorderEnabled
+		local detachedPortraitBorderEnabled = portraitDetached and portraitBorderWithFrame and frameBorderEnabled and not GFH.SupportsGroupPortraitStyle(self)
 		local portraitBorderCfg
 		if detachedPortraitBorderEnabled then
 			local detachedBorderOffset = portraitCfg.detachedBorderOffset
@@ -7591,7 +7621,7 @@ function GF:LayoutButton(self)
 		else
 			setBackdrop(st.portraitHolder, nil)
 		end
-		if UF.ApplyDetachedPortraitShapeBorder then
+		if UF.ApplyDetachedPortraitShapeBorder and not GFH.SupportsGroupPortraitStyle(self) then
 			UF.ApplyDetachedPortraitShapeBorder(st, portraitShape, portraitBorderCfg or borderCfg, borderDef, detachedPortraitBorderEnabled)
 		end
 	end
@@ -10033,7 +10063,8 @@ function GF:ApplyManagedAuraContainers(self, allowEditMode)
 		debuff = getGroupDebuffMatchFilter(ac.debuff),
 		externals = GF.GetManagedExternalAuraFilter(),
 	}
-	local healerBuffCompiled = UF.GroupFramesHealerBuffs and UF.GroupFramesHealerBuffs.GetCompiled and UF.GroupFramesHealerBuffs.GetCompiled(kind, cfg)
+	local healerBuffs = UF.GroupFramesHealerBuffs
+	local healerBuffCompiled = healerBuffs and healerBuffs.GetCompiledForUnit(kind, cfg, unit)
 	local suppressedSpellIDs = healerBuffCompiled and healerBuffCompiled.enabled and UF.GroupFramesHealerBuffs.GetManagedSuppressedSpellIDs
 		and UF.GroupFramesHealerBuffs.GetManagedSuppressedSpellIDs(healerBuffCompiled)
 	local placementAuraType = UF.GroupFramesHealerBuffs and UF.GroupFramesHealerBuffs.GetUnitAuraType and UF.GroupFramesHealerBuffs.GetUnitAuraType(unit)
@@ -10782,8 +10813,8 @@ function GF:UpdateAuras(self, updateInfo)
 	auraQueryMax.external = nil
 	local healerBuffCompiled = nil
 	local healerBuffNeedsWideScan = false
-	if wantsHealerBuffPlacement and UF.GroupFramesHealerBuffs and UF.GroupFramesHealerBuffs.GetCompiled then
-		healerBuffCompiled = UF.GroupFramesHealerBuffs.GetCompiled(self._eqolGroupKind or "party", cfg)
+	if wantsHealerBuffPlacement and UF.GroupFramesHealerBuffs then
+		healerBuffCompiled = UF.GroupFramesHealerBuffs.GetCompiledForUnit(self._eqolGroupKind or "party", cfg, unit)
 		if healerBuffCompiled and UF.GroupFramesHealerBuffs.CompiledNeedsWideHelpfulScan then healerBuffNeedsWideScan = UF.GroupFramesHealerBuffs.CompiledNeedsWideHelpfulScan(healerBuffCompiled) end
 	end
 	local buffCache = getAuraCache(st, "buff")
@@ -12765,34 +12796,29 @@ function GF:UpdatePortrait(self, unit, st)
 
 	local kind = self._eqolGroupKind or "party"
 	local cfg = self._eqolCfg or getCfg(kind)
-	local portraitEnabled, _, portraitSquareBackground, _, portraitMode, portraitShape = GF.ResolveGroupPortraitConfig(cfg, kind)
-	local portraitDetached = select(1, GF.ResolveGroupPortraitDetachedConfig(cfg, kind))
+	local portraitEnabled, _, portraitSquareBackground, borderWithFrame, portraitMode, portraitShape = GF.ResolveGroupPortraitConfig(cfg, kind, self._eqolPartyPet)
+	local portraitDetached = select(1, GF.ResolveGroupPortraitDetachedConfig(cfg, kind, self._eqolPartyPet))
 	if st._portraitEnabled ~= nil then portraitEnabled = st._portraitEnabled == true end
 	if st._portraitSquareBackground ~= nil then portraitSquareBackground = st._portraitSquareBackground == true end
 
-	if not portraitEnabled or not unit then
+	if not portraitEnabled or not unit or (UnitExists and not UnitExists(unit)) then
 		st.portrait:SetTexture(nil)
 		st.portrait:Hide()
 		if st.portraitBg then st.portraitBg:Hide() end
 		if st.portraitHolder then st.portraitHolder:Hide() end
+		GFH.HideGroupPortraitStyles(st)
 		GF.ApplyGroupPortraitSeparator(cfg, kind, st, false)
 		return
 	end
 
-	if UnitExists and not UnitExists(unit) then
-		st.portrait:SetTexture(nil)
-		st.portrait:Hide()
-		if st.portraitBg then st.portraitBg:Hide() end
-		if st.portraitHolder then st.portraitHolder:Hide() end
-		GF.ApplyGroupPortraitSeparator(cfg, kind, st, false)
-		return
-	end
-
-	if UF.ApplyPortraitTexture then
-		UF.ApplyPortraitTexture(st.portrait, unit, portraitMode)
-	else
-		st.portrait:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-		SetPortraitTexture(st.portrait, unit)
+	local castIcon = GFH.SupportsGroupPortraitStyle(self) and UFHelper.ApplyPortraitCastTexture(st.portrait, unit, cfg)
+	if not castIcon then
+		if UF.ApplyPortraitTexture then
+			UF.ApplyPortraitTexture(st.portrait, unit, portraitMode)
+		else
+			st.portrait:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+			SetPortraitTexture(st.portrait, unit)
+		end
 	end
 	if UF.ApplyPortraitShape then UF.ApplyPortraitShape(st, portraitShape) end
 	st.portrait:Show()
@@ -12804,7 +12830,18 @@ function GF:UpdatePortrait(self, unit, st)
 			st.portraitBg:Hide()
 		end
 	end
+	local borderDef = DEFAULTS[kind] and DEFAULTS[kind].border
+	GFH.UpdateGroupPortraitStyles(self, st, unit, cfg, portraitShape, portraitDetached, borderWithFrame, borderDef)
 	GF.ApplyGroupPortraitSeparator(cfg, kind, st, not portraitDetached)
+end
+
+function GF:RefreshGroupPortraits(kind)
+	if not isFeatureEnabled() then return end
+	local function refresh(button)
+		if button and GFH.SupportsGroupPortraitStyle(button) and button:IsVisible() then GF:UpdatePortrait(button) end
+	end
+	GF.ForEachVisualChild(GF.headers and GF.headers[kind], refresh)
+	for _, button in ipairs((GF._previewFrames and GF._previewFrames[kind]) or EMPTY) do refresh(button) end
 end
 
 function GF:UpdateAll(self)
@@ -12986,6 +13023,7 @@ function GF:UnitButton_ClearUnit(self)
 		if st.portraitBg then st.portraitBg:Hide() end
 		if st.portraitHolder then st.portraitHolder:Hide() end
 		if st.portraitSeparator then st.portraitSeparator:Hide() end
+		GFH.HideGroupPortraitStyles(st)
 	end
 	if GF.ClearAuraSamplesOnButton then GF.ClearAuraSamplesOnButton(self) end
 	if UF.GroupFramesHealerBuffs and UF.GroupFramesHealerBuffs.ClearButton then UF.GroupFramesHealerBuffs.ClearButton(self) end
@@ -13054,20 +13092,30 @@ function GF:UnitButton_RegisterUnitEvents(self, unit)
 	end
 
 	regUnit("UNIT_NAME_UPDATE")
-	if self._eqolUFState and self._eqolUFState._wantsPortrait then
+	local portraitState = self._eqolUFState
+	if portraitState and portraitState._wantsPortrait then
 		regUnit("UNIT_PORTRAIT_UPDATE")
+		local portrait = cfg and cfg.portrait
+		if GFH.SupportsGroupPortraitStyle(self) and portrait and portrait.classificationBorder == true and portrait.decorationStyle == "AUTO" then
+			regUnit("UNIT_CLASSIFICATION_CHANGED")
+		end
+		if portraitState._wantsGroupPortraitCast then GFH.RegisterGroupPortraitCastEvents(regUnit) end
+		if portraitState._wantsGroupPortraitLevel and unit == "player" then reg("PLAYER_LEVEL_UP") end
 		regUnit("UNIT_MODEL_CHANGED")
 		regUnit("UNIT_ENTERED_VEHICLE")
 		regUnit("UNIT_EXITED_VEHICLE")
 		regUnit("UNIT_EXITING_VEHICLE")
 	end
 	regUnit("UNIT_FLAGS")
-	if (cfg and cfg.pvpIndicator and cfg.pvpIndicator.enabled == true) or (self._eqolUFState and self._eqolUFState._wantsHealerBuffPlacement) then regUnit("UNIT_FACTION") end
+	if (cfg and cfg.pvpIndicator and cfg.pvpIndicator.enabled == true)
+		or (portraitState and (portraitState._wantsHealerBuffPlacement or portraitState._wantsGroupPortraitReaction)) then
+		regUnit("UNIT_FACTION")
+	end
 	if not self._eqolPartyPet then
 		regUnit("UNIT_CTR_OPTIONS")
 		regUnit("UNIT_OTHER_PARTY_CHANGED")
 	end
-	local wantsLevel = self._eqolUFState and self._eqolUFState._wantsLevel
+	local wantsLevel = portraitState and (portraitState._wantsLevel or portraitState._wantsGroupPortraitLevel)
 	if not wantsLevel and UFHelper and UFHelper.textModeUsesLevel then
 		local hc = cfg and cfg.health or {}
 		local pcfg = cfg and cfg.power or {}
@@ -13177,6 +13225,7 @@ local function dispatchUnitLevel(btn, unit)
 	GF:UpdateLevel(btn, unit, st)
 	GF:UpdateHealthValue(btn, unit, st)
 	GF:UpdatePowerValue(btn, unit, st)
+	if st._wantsGroupPortraitLevel then GF:UpdatePortrait(btn, unit, st) end
 end
 local function dispatchUnitConnection(btn, unit)
 	local st = getState(btn)
@@ -13227,10 +13276,12 @@ local UNIT_DISPATCH = {
 	UNIT_DISPLAYPOWER = dispatchUnitDisplayPower,
 	UNIT_NAME_UPDATE = dispatchUnitName,
 	UNIT_LEVEL = dispatchUnitLevel,
+	PLAYER_LEVEL_UP = dispatchUnitLevel,
 	UNIT_CONNECTION = dispatchUnitConnection,
 	PARTY_MEMBER_ENABLE = dispatchUnitConnection,
 	PARTY_MEMBER_DISABLE = dispatchUnitConnection,
 	UNIT_PORTRAIT_UPDATE = dispatchUnitPortrait,
+	UNIT_CLASSIFICATION_CHANGED = dispatchUnitPortrait,
 	UNIT_MODEL_CHANGED = dispatchUnitPortrait,
 	UNIT_ENTERED_VEHICLE = dispatchUnitPortrait,
 	UNIT_EXITED_VEHICLE = dispatchUnitPortrait,
@@ -13239,6 +13290,8 @@ local UNIT_DISPATCH = {
 	UNIT_FACTION = function(btn, unit)
 		GF:UpdatePvPIndicator(btn)
 		GF:RefreshHealerBuffPlacementRelationship(btn, unit)
+		local st = getState(btn)
+		if st._wantsGroupPortraitReaction then GF:UpdatePortrait(btn, unit, st) end
 	end,
 	UNIT_CTR_OPTIONS = function(btn) GF:UpdatePhaseIcon(btn) end,
 	UNIT_OTHER_PARTY_CHANGED = function(btn) GF:UpdatePhaseIcon(btn) end,
@@ -13264,10 +13317,15 @@ function GF.UnitButton_OnEvent(self, event, unit, ...)
 		return
 	end
 	local u = getUnit(self)
-	if not u or (unit and unit ~= u) then return end
+	if not u or (event ~= "PLAYER_LEVEL_UP" and unit and unit ~= u) then return end
 
 	local fn = UNIT_DISPATCH[event]
-	if fn then fn(self, u, ...) end
+	if fn then
+		fn(self, u, ...)
+	elseif UFHelper.PortraitCastEvents[event] then
+		local st = self._eqolUFState
+		if st and st._wantsGroupPortraitCast then GFH.RefreshGroupPortraitCast(GF, self, st, u, getUnit) end
+	end
 end
 
 function GF.UnitButton_OnEnter(self)
@@ -15047,9 +15105,15 @@ function GF:QueueEditModeAuraLayoutRefresh(kind)
 	end
 end
 
-function GF:RefreshHealthForKind(kind)
+function GF:RefreshHealthForKind(kind, healAbsorbOnly)
 	local function refreshChild(child)
-		if child and child._eqolGroupKind == kind then GF:UpdateHealth(child) end
+		if not child or child._eqolGroupKind ~= kind then return end
+		if healAbsorbOnly then
+			local unit = getUnit(child)
+			if unit then dispatchUnitHealAbsorb(child, unit) end
+		else
+			GF:UpdateHealth(child)
+		end
 	end
 	for _, header in pairs(GF.headers or {}) do
 		GF.ForEachVisualChild(header, refreshChild)
@@ -16529,6 +16593,7 @@ function GF:ApplySpotlightHeader(cfg, layout, state, forceShow, forceHide, optio
 end
 
 function GF:ApplyHeaderAttributes(kind, options)
+	if kind and self._portraitSettingsResetKind == kind then return end
 	local cfg = getCfg(kind)
 	if kind == "raid" and UF.RaidBlocks then cfg = UF.RaidBlocks.EffectiveConfig(cfg) end
 	local header = GF.headers[kind]
@@ -19677,6 +19742,9 @@ function GF.ReorderGroupEditModeSettings(settings)
 		"aggroHighlight",
 		"targetHighlight",
 		"portrait",
+		"portraitDecoration",
+		"portraitLevel",
+		"portraitCast",
 		"text",
 		"dataBar",
 		"health",
@@ -33792,6 +33860,10 @@ local function buildEditModeSettings(kind, editModeId, petAuraMode)
 
 	if raidKind and UF.RaidBlocks then UF.RaidBlocks.AppendSettings(settings) end
 	UF.GroupHealthColors.AppendSettings(settings, kind, editModeId, getCfg)
+	if kind ~= "raid" and not petAuraMode and addon.Aura.GroupFrameNavigation then
+		addon.Aura.GroupFrameNavigation.AppendPortraitSettings(settings, kind, editModeId, getCfg, requestEditModeSettingsRefresh, borderOptions)
+		if kind == "party" then addon.Aura.GroupFrameNavigation.AppendPartyPetPortraitSettings(settings, editModeId, getCfg, requestEditModeSettingsRefresh) end
+	end
 	settings = GF.ReorderGroupEditModeSettings(settings)
 	UF.PartyVisibility.ConfigureSettings(settings, kind, editModeId, getCfg)
 	if addon.Aura.GroupFrameNavigation then addon.Aura.GroupFrameNavigation.ConfigureTextureSettings(settings, kind, editModeId, getCfg, DEFAULTS[kind], textureOptions) end
@@ -35199,6 +35271,10 @@ local function applyEditModeData(kind, data)
 
 	if kind == "party" then
 		GFH.ApplyPartyPetAuraLayout(cfg, data)
+		if type(data.partyPetPortrait) == "table" then
+			cfg.petFrames = cfg.petFrames or {}
+			cfg.petFrames.portrait = CopyTable(data.partyPetPortrait)
+		end
 		if
 			data.partyPetFramesEnabled ~= nil
 			or data.partyPetFramesPowerEnabled ~= nil
@@ -35596,6 +35672,7 @@ function GF.BuildEditModeLayoutDefaults(kind, cfg)
 		partyPetFramesEnabled = kind == "party" and cfg.petFrames and cfg.petFrames.enabled == true or false,
 		partyPetFramesPowerEnabled = kind == "party" and cfg.petFrames and cfg.petFrames.powerEnabled ~= false or false,
 		partyPetFramesPosition = kind == "party" and GF.NormalizePartyPetPosition(cfg.petFrames and cfg.petFrames.position) or nil,
+		partyPetPortrait = kind == "party" and cfg.petFrames and CopyTable(type(cfg.petFrames.portrait) == "table" and cfg.petFrames.portrait or {}) or nil,
 		partyPetFramesWidthOffset = kind == "party" and ((cfg.petFrames and cfg.petFrames.widthOffset) or (DEFAULTS.party and DEFAULTS.party.petFrames and DEFAULTS.party.petFrames.widthOffset) or 0) or nil,
 		partyPetFramesHeightOffset = kind == "party" and ((cfg.petFrames and cfg.petFrames.heightOffset) or (DEFAULTS.party and DEFAULTS.party.petFrames and DEFAULTS.party.petFrames.heightOffset) or 0) or nil,
 		partyPetFramesAlignment = kind == "party" and GF.NormalizePartyPetAlignment(cfg.petFrames and cfg.petFrames.alignment) or nil,
@@ -36341,6 +36418,8 @@ function GF:OnExitEditMode(kind)
 	header._eqolForceShow = nil
 	if GF._customSortEditor and GF._customSortEditor.IsShown and GF._customSortEditor:IsShown() then GF._customSortEditor:Hide() end
 	GF:ApplyHeaderAttributes(kind)
+	-- The secure header refresh waits for combat to end. Refresh the overlay through its usual unit-event path.
+	if cfg.health and cfg.health.showSampleHealAbsorb == true and InCombatLockdown and InCombatLockdown() then GF:RefreshHealthForKind(kind, true) end
 	local function refreshAfterEditMode()
 		GF:ClearEditModeAuraSamples()
 		if isEditModeActive() then

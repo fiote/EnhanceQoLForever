@@ -114,6 +114,411 @@ local function refresh(kind, panelId, rebuildIndex)
 	elseif kind == "panel" then Panels:RefreshLayoutPanelStandaloneMenu() end
 end
 
+local hoverPanelGroup = "cooldownPanelHoverBuff"
+local hoverEntryGroup = "cooldownPanelStandaloneHoverBuff"
+local hoverStyleTabs = {
+	border = "cooldownPanelHoverBorder", background = "cooldownPanelHoverBackground", iconBorder = "cooldownPanelHoverIconBorder",
+	launcherBackground = "cooldownPanelHoverLauncherBackground",
+	swipe = "cooldownPanelHoverSwipe", font = "cooldownPanelHoverFont", titleFont = "cooldownPanelHoverTitleFont", count = "cooldownPanelHoverCount",
+}
+local hoverPanelGroups = {
+	cooldownPanelGeneral = { panelName = true, enabled = true, specFilter = true, foreverUseSpecFilter = true, foreverTalentFilter = true },
+	cooldownPanelLayout = { layoutMode = true, strata = true },
+	cooldownPanelIcon = { iconSize = true },
+	cooldownPanelVisibility = {
+		visibility = true, hideInVehicle = true, hideInPetBattle = true, hideInClientScene = true,
+		opacityOutOfCombat = true, opacityInCombat = true,
+	},
+}
+local hoverPanelWholeGroups = { cooldownPanelAnchor = true, cooldownPanelCopySettings = true }
+local hoverPanelDefaults = {
+	hoverBuffCount = true,
+	hoverBuffPerRow = 2,
+	hoverBuffSpacing = 4,
+	hoverBuffGap = 5,
+	hoverBuffDirection = "AUTO",
+	hoverBuffAnimation = "REVEAL",
+	hoverBuffDisplay = "BOTH",
+}
+local hoverPanelFields = {
+	"hoverBuffPerRow", "hoverBuffEntryIconSize", "hoverBuffSpacing", "hoverBuffGap", "hoverBuffDirection", "hoverBuffAnimation", "hoverBuffDisplay",
+}
+
+local function refreshHoverBuffPanel(panelId, refreshEditor)
+	Panels:RefreshPanelForCurrentEditContext(panelId, refreshEditor)
+	if refreshEditor and Panels.BlizzardEditor and Panels.BlizzardEditor.RefreshPanel then Panels.BlizzardEditor:RefreshPanel(panelId) end
+end
+
+local hoverStyleSplitsByTab = {}
+local hoverStyleSplitsByField = {}
+local function defineHoverStyleSplit(marker, fields, firstTab, secondTab)
+	local split = { marker = marker, fields = fields }
+	hoverStyleSplitsByTab[firstTab], hoverStyleSplitsByTab[secondTab] = split, split
+	for independent, shared in pairs(fields) do
+		hoverStyleSplitsByField[independent], hoverStyleSplitsByField[shared] = split, split
+	end
+end
+defineHoverStyleSplit("launcherBackgroundSeparated", {
+	launcherBackgroundEnabled = "backgroundEnabled", launcherBackgroundColor = "backgroundColor",
+	launcherBackgroundClassColor = "backgroundClassColor", launcherBackgroundTexture = "backgroundTexture",
+}, hoverStyleTabs.background, hoverStyleTabs.launcherBackground)
+defineHoverStyleSplit("titleStyleSeparated", {
+	titleFont = "font", titleFontSize = "fontSize", titleFontStyle = "fontStyle",
+	titleTextColor = "textColor", titleTextClassColor = "textClassColor",
+}, hoverStyleTabs.font, hoverStyleTabs.titleFont)
+
+local function splitHoverStyle(style, split)
+	if not split or style[split.marker] then return end
+	-- Keep both visuals as configured until one is edited or reset.
+	for independent, shared in pairs(split.fields) do style[independent] = style[shared] end
+	style[split.marker] = true
+end
+
+local hoverLayoutStyleAfter = { rowSpacing = "hoverBuffSpacing", emptySlot = "hoverBuffDisplay" }
+
+local function addHoverBuffStyleSettings(append, addTab, get, set, kinds, hover)
+	local colors = hover.styleColors
+	local function read(field, fallback)
+		local style = get("hoverBuffStyle")
+		if type(style) ~= "table" then return fallback end
+		local split = hoverStyleSplitsByField[field]
+		if split and not style[split.marker] then field = split.fields[field] or field end
+		local value = style[field]
+		if value == nil then return fallback end
+		return value
+	end
+	local function change(field, value)
+		local source = get("hoverBuffStyle")
+		local style = type(source) == "table" and Helper.CopyTableShallow(source) or {}
+		splitHoverStyle(style, hoverStyleSplitsByField[field])
+		style[field] = value
+		set("hoverBuffStyle", style)
+	end
+	local tab, enabledField, enabledDefault, prerequisite
+	local function control(field, descriptor)
+		local disabled = descriptor.disabled
+		local dependency, default, required = enabledField, enabledDefault, prerequisite
+		descriptor.disabled = function()
+			return (required and not required()) or (dependency and field ~= dependency and not read(dependency, default)) or (disabled and disabled())
+		end
+		if tab then tab.hoverStyleFields[#tab.hoverStyleFields + 1] = descriptor.hoverStyleStorageField or field end
+		append(descriptor, "hoverBuffStyle." .. field, tab and tab.id or hoverPanelGroup, hoverLayoutStyleAfter[field])
+	end
+	local function section(field, name, default)
+		tab = addTab(hoverStyleTabs[field], name)
+		tab.hoverStyleFields = {}
+		enabledField, enabledDefault = default ~= nil and field .. "Enabled" or nil, default
+	end
+	local function checkbox(field, name, default)
+		control(field, { name = name, kind = kinds.Checkbox,
+			get = function() return read(field, default) end,
+			set = function(_, value) change(field, value == true) end })
+	end
+	local function slider(field, name, low, high, fallback)
+		control(field, { name = name, kind = kinds.Slider, minValue = low, maxValue = high, valueStep = 1, allowInput = true,
+			get = function()
+				local default = type(fallback) == "function" and fallback() or fallback
+				return Helper.ClampInt(read(field), low, high, default)
+			end,
+			set = function(_, value) change(field, Helper.ClampInt(value, low, high, low)) end })
+	end
+	local function color(field, name)
+		local fallback = colors and colors[field] or { 1, 1, 1, 1 }
+		local colorField = field .. "Color"
+		local function current() return Helper.NormalizeColor(read(colorField), fallback) end
+		control(colorField, { name = name, kind = kinds.Color, hasOpacity = true,
+			disabled = function() return read(field .. "ClassColor", false) end,
+			get = function()
+				local rgba = current()
+				return { r = rgba[1], g = rgba[2], b = rgba[3], a = rgba[4] }
+			end,
+			set = function(_, value)
+				change(colorField, Helper.NormalizeColor(value, fallback))
+			end })
+		control(field .. "Alpha", { name = L["Alpha"], hoverStyleStorageField = colorField, kind = kinds.Slider, minValue = 0, maxValue = 100, valueStep = 1, allowInput = true,
+			get = function() return math.floor(current()[4] * 100 + 0.5) end,
+			set = function(_, value)
+				local rgba = current()
+				rgba[4] = Helper.ClampInt(value, 0, 100, math.floor(fallback[4] * 100 + 0.5)) / 100
+				change(colorField, rgba)
+			end,
+			formatter = function(value) return tostring(value) .. "%" end })
+	end
+	local function dropdown(field, name, options, fallback)
+		local function current() return read(field, fallback) end
+		control(field, { name = name, kind = kinds.Dropdown, get = current,
+			set = function(_, value) change(field, value) end,
+			generator = function(_, menu)
+				for _, option in ipairs(options()) do
+					local value, label = option.value, option.label
+					menu:CreateRadio(label, function() return current() == value end, function() change(field, value) end)
+				end
+			end })
+	end
+	local function texture(field, name, media)
+		dropdown(field, name, function()
+			local options = { { label = _G.DEFAULT } }
+			local names = addon.functions.GetLSMMediaNames(media)
+			for _, label in ipairs(names) do options[#options + 1] = { value = label, label = label } end
+			return options
+		end)
+	end
+	local function border(field, title, defaultEnabled)
+		section(field, title, defaultEnabled)
+		checkbox(field .. "Enabled", L["Enabled"], defaultEnabled)
+		color(field, L["Color"])
+		checkbox(field .. "ClassColor", L["Use class color"], false)
+		texture(field .. "Texture", L["Border texture"], "border")
+		slider(field .. "Size", L["Size"], 1, hover.borderLimit, 1)
+		slider(field .. "Offset", L["Offset"], -hover.borderLimit, hover.borderLimit, 0)
+	end
+	local function background(field, title)
+		section(field, title, true)
+		checkbox(field .. "Enabled", L["Enabled"], true)
+		color(field, L["Background color"])
+		checkbox(field .. "ClassColor", L["Use class color"], false)
+		texture(field .. "Texture", L["Background texture"], "background")
+	end
+
+	slider("rowSpacing", L["Vertical spacing"], 0, 32, function() return get("hoverBuffSpacing", 4) end)
+	dropdown("emptySlot", L["CooldownPanelHoverBuffMissingStyle"], function()
+		return {
+			{ value = "DESATURATED", label = L["Desaturate icon"] },
+			{ value = "EMPTY", label = L["CooldownPanelHoverBuffEmptySlot"] },
+		}
+	end, "EMPTY")
+	border("border", L["Border"], true)
+	background("background", L["CooldownPanelHoverBuffPanelBackground"])
+	background("launcherBackground", L["CooldownPanelHoverBuffLauncherBackground"])
+	border("iconBorder", L["Icon border"], false)
+	section("swipe", L["Cooldown"], false)
+	checkbox("swipeEnabled", L["Draw cooldown swipe"], false)
+	color("swipe", L["Color"])
+	section("font", L["CooldownPanelHoverBuffEntryLabels"])
+	local function fontSettings(field, sizeField, outlineField, sizeMax)
+		dropdown(field, L["Font"], function() return Helper.GetFontOptions(STANDARD_TEXT_FONT) end,
+			addon.functions.GetGlobalFontConfigKey and addon.functions.GetGlobalFontConfigKey() or "__EQOL_GLOBAL_FONT__")
+		slider(sizeField, _G.FONT_SIZE or L["Size"], 6, sizeMax, 12)
+		dropdown(outlineField, L["Font outline"], function() return Helper.FontStyleOptions end,
+			addon.functions.GetGlobalFontStyleConfigKey and addon.functions.GetGlobalFontStyleConfigKey() or "__EQOL_GLOBAL_FONT_STYLE__")
+	end
+	fontSettings("font", "fontSize", "fontStyle", 28)
+	color("text", L["Text color"])
+	checkbox("textClassColor", L["Use class color"], false)
+
+	section("titleFont", L["CooldownPanelHoverBuffTitle"])
+	fontSettings("titleFont", "titleFontSize", "titleFontStyle", 28)
+	color("titleText", L["Text color"])
+	checkbox("titleTextClassColor", L["Use class color"], false)
+
+	section("count", L["CooldownPanelCountersHeader"])
+	local function countEnabled() return get("hoverBuffCount", true) ~= false end
+	append({
+		name = L["CooldownPanelHoverBuffCount"], kind = kinds.Checkbox,
+		get = countEnabled,
+		set = function(_, value) set("hoverBuffCount", value == true) end,
+	}, "hoverBuffCount", tab.id)
+	prerequisite = countEnabled
+	dropdown("countAnchor", L["Anchor"], function() return Helper.AnchorOptions end, "BOTTOMRIGHT")
+	slider("countX", L["Offset X"], -64, 64, -1)
+	slider("countY", L["Offset Y"], -64, 64, 1)
+	fontSettings("countFont", "countFontSize", "countFontStyle", 40)
+	color("count", L["Text color"])
+	checkbox("countClassColor", L["Use class color"], false)
+end
+
+function Navigation.AddHoverBuffSettings(settings, kind, panelId, entryId)
+	local hover = Panels.HoverBuffPanel
+	if not hover or not hover:IsAvailable() or (kind ~= "panel" and kind ~= "entry") then return end
+	local types = addon.EditModeLib.SettingType
+	if kind == "panel" then
+		local hasPanelGeneral
+		for _, data in ipairs(settings) do
+			if data.kind == types.Collapsible and data.id == "cooldownPanelGeneral" then hasPanelGeneral = true; break end
+		end
+		if not hasPanelGeneral then return end
+	end
+	local function getPanel() return Panels:GetPanel(panelId) end
+	local function isEnabled()
+		local panel = getPanel()
+		return panel and hover:IsEnabled(panel.layout)
+	end
+	local function getConfig()
+		local panel = getPanel()
+		if not panel then return end
+		if kind == "panel" then return panel.layout end
+		local entry = panel.entries and panel.entries[entryId]
+		return entry
+	end
+	if kind == "entry" and not (isEnabled() and getConfig()) then return end
+	local groupId = kind == "panel" and hoverPanelGroup or hoverEntryGroup
+	local modeName = L["CooldownPanelHoverBuffMode"]
+	local function get(field, fallback)
+		local config = getConfig()
+		local value = config and config[field]
+		if value == nil then return fallback end
+		return value
+	end
+	local function set(field, value)
+		if InCombatLockdown() then return end
+		local config = getConfig()
+		if not config or config[field] == value then return end
+		config[field] = value
+		refreshHoverBuffPanel(panelId, kind == "entry")
+	end
+	local function hideInMode(data)
+		local wasShown = data.isShown
+		data.isShown = function(...) return not isEnabled() and (not wasShown or wasShown(...)) end
+		data._eqolHoverBuffModeDependent = isEnabled
+	end
+	for _, data in ipairs(settings) do
+		local id = data.kind == types.Collapsible and data.id or data.parentId
+		if kind == "entry" and (id == "cooldownPanelStandaloneDisplay" and data.name == L["CooldownPanelCDMAuraOverlaySpellIDs"]) then
+			data.parentId = groupId
+		elseif kind == "entry" then
+			local entry = getConfig()
+			if entry and entry.type == "CDM_AURA" and id ~= "cooldownPanelStandaloneDisplay" then hideInMode(data) end
+		elseif id and not hoverPanelWholeGroups[id] then
+			local enabledFields = hoverPanelGroups[id]
+			local field = data.navigationField or data.field
+			local general = id == "cooldownPanelGeneral" and (data.name == L["CooldownPanelPanelName"] or data.name == L["Enabled"] or data.name == _G.CLASS
+				or data.name == L["CooldownPanelSpecFilter"])
+			if not enabledFields or (data.kind ~= types.Collapsible and not enabledFields[field] and not general) then
+				hideInMode(data)
+			elseif field == "iconSize" then
+				local shown, disabled = data.isShown, data.disabled
+				data.isShown = function(...) return isEnabled() or not shown or shown(...) end
+				data.disabled = function(...) return not isEnabled() and disabled and disabled(...) end
+				local refreshBarSetting = data._eqolRefreshBarPanelSetting
+				if refreshBarSetting then
+					data._eqolRefreshBarPanelSetting = function()
+						refreshBarSetting()
+						if isEnabled() then data.navigationSearchExcluded = nil end
+					end
+					data._eqolRefreshBarPanelSetting()
+				end
+			end
+		end
+	end
+	local function addTab(id, name)
+		local tab = { kind = types.Collapsible, id = id, name = name, isShown = isEnabled }
+		if kind == "panel" then
+			tab.navigationHint = function() return L["CooldownPanelLayoutMode"], nil, "cooldownPanelLayout" end
+		end
+		settings[#settings + 1] = tab
+		return tab
+	end
+	addTab(groupId, modeName)
+	local function append(data, field, parent, afterField)
+		data.parentId, data.navigationField = parent or groupId, field
+		if kind == "panel" then
+			data.isShown = isEnabled
+			data.navigationHint = function() return L["CooldownPanelLayoutMode"], nil, "cooldownPanelLayout" end
+		end
+		if afterField then
+			for index = #settings, 1, -1 do
+				if settings[index].navigationField == afterField then
+					table.insert(settings, index + 1, data)
+					return
+				end
+			end
+		end
+		settings[#settings + 1] = data
+	end
+	local function textInput(name, field, maxChars, parent, disabled)
+		append({
+			name = name, kind = types.Input, maxChars = maxChars, inputWidth = 165, disabled = disabled,
+			get = function() return get(field, "") end,
+			set = function(_, value)
+				local text = (value or ""):match("^%s*(.-)%s*$")
+				set(field, text ~= "" and text or nil)
+			end,
+		}, field, parent)
+	end
+	local function iconInput(field, parent)
+		append({
+			name = L["CooldownPanelHoverBuffIcon"], kind = types.Input, maxChars = 10, inputWidth = 165,
+			get = function()
+				local value = get(field)
+				return value and tostring(value) or ""
+			end,
+			set = function(_, value)
+				local text = (value or ""):match("^%s*(.-)%s*$")
+				local number = text:match("^%d+$") and tonumber(text)
+				if text == "" then set(field, nil)
+				elseif number and number >= 1 and number <= 2147483647 and number == math.floor(number) then set(field, number) end
+			end,
+		}, field, parent)
+	end
+	if kind == "entry" then
+		local function showName() return get("hoverBuffShowLabel", true) ~= false end
+		append({
+			name = L["Show name"], kind = types.Checkbox,
+			get = showName,
+			set = function(_, value) set("hoverBuffShowLabel", value == true) end,
+		}, "hoverBuffShowLabel")
+		textInput(L["QuickCastCustomLabel"], "hoverBuffLabel", 64, nil, function() return not showName() end)
+		iconInput("hoverBuffIcon")
+		return
+	end
+	iconInput("hoverBuffIcon", "cooldownPanelIcon")
+	textInput(L["CooldownPanelHoverBuffTitle"], "hoverBuffTitle", 64, hoverStyleTabs.titleFont)
+	append({
+		name = L["CooldownPanelHoverBuffPerRow"], kind = types.Slider, minValue = 1, maxValue = 12, valueStep = 1, allowInput = true,
+		get = function() return Helper.ClampInt(get("hoverBuffPerRow"), 1, 12, hoverPanelDefaults.hoverBuffPerRow) end,
+		set = function(_, value) set("hoverBuffPerRow", Helper.ClampInt(value, 1, 12, hoverPanelDefaults.hoverBuffPerRow)) end,
+	}, "hoverBuffPerRow")
+	local iconSize = hover.entryIconSize
+	local function normalizeIconSize(value) return Helper.ClampInt(value, iconSize.min, iconSize.max, iconSize.default) end
+	append({
+		name = L["CooldownPanelHoverBuffEntryIconSize"], kind = types.Slider, minValue = iconSize.min, maxValue = iconSize.max, valueStep = 1, allowInput = true,
+		get = function() return normalizeIconSize(get("hoverBuffEntryIconSize")) end,
+		set = function(_, value) set("hoverBuffEntryIconSize", normalizeIconSize(value)) end,
+	}, "hoverBuffEntryIconSize")
+	append({
+		name = L["Horizontal spacing"], kind = types.Slider, minValue = 0, maxValue = 18, valueStep = 1, allowInput = true,
+		get = function() return Helper.ClampInt(get("hoverBuffSpacing"), 0, 18, hoverPanelDefaults.hoverBuffSpacing) end,
+		set = function(_, value) set("hoverBuffSpacing", Helper.ClampInt(value, 0, 18, hoverPanelDefaults.hoverBuffSpacing)) end,
+	}, "hoverBuffSpacing")
+	local function dropdown(name, field, options)
+		local function getValue()
+			local value = get(field, hoverPanelDefaults[field])
+			for _, option in ipairs(options) do if option[1] == value then return value end end
+			return hoverPanelDefaults[field]
+		end
+		append({
+			name = name, kind = types.Dropdown, get = getValue,
+			set = function(_, value) set(field, value) end,
+			generator = function(_, menu)
+				for _, option in ipairs(options) do
+					local value, label = option[1], option[2]
+					menu:CreateRadio(label, function() return getValue() == value end, function() set(field, value) end)
+				end
+			end,
+		}, field)
+	end
+	append({
+		name = L["CooldownPanelHoverBuffGap"], kind = types.Slider, minValue = 0, maxValue = 128, valueStep = 1, allowInput = true,
+		get = function() return Helper.ClampInt(get("hoverBuffGap"), 0, 128, hoverPanelDefaults.hoverBuffGap) end,
+		set = function(_, value) set("hoverBuffGap", Helper.ClampInt(value, 0, 128, hoverPanelDefaults.hoverBuffGap)) end,
+	}, "hoverBuffGap")
+	dropdown(L["CooldownPanelHoverBuffDirection"], "hoverBuffDirection", {
+		{ "AUTO", L["Auto"] }, { "UP", L["Up"] }, { "DOWN", L["Down"] }, { "LEFT", L["Left"] }, { "RIGHT", L["Right"] },
+	})
+	dropdown(L["CooldownPanelHoverBuffAnimation"], "hoverBuffAnimation", {
+		{ "NONE", _G.NONE or L["Off"] },
+		{ "FADE", L["CooldownPanelHoverBuffAnimationFade"] },
+		{ "SLIDE", L["CooldownPanelHoverBuffAnimationSlide"] },
+		{ "REVEAL", L["CooldownPanelHoverBuffAnimationReveal"] },
+	})
+	dropdown(L["CooldownPanelHoverBuffDisplay"], "hoverBuffDisplay", {
+		{ "BOTH", L["CooldownPanelHoverBuffDisplayBoth"] },
+		{ "MISSING", L["CooldownPanelCDMAuraAlwaysShowModeMissing"] },
+		{ "ACTIVE", L["CooldownPanelCDMAuraAlwaysShowModeHide"] },
+	})
+	addHoverBuffStyleSettings(append, addTab, get, set, types, hover)
+end
+
 function Navigation.CustomDurationTalentSettings(panelId, entryId)
 	local types = addon.EditModeLib.SettingType
 	local parentId = "cooldownPanelStandaloneActivation"
@@ -240,6 +645,7 @@ function Navigation.StructureSettings(settings, kind, panelId, entryId)
 		end
 	end
 	for index, data in ipairs(rebuilt) do settings[index] = data end
+	Navigation.AddHoverBuffSettings(settings, kind, panelId, entryId)
 end
 
 function Navigation.Build(settings, kind, panelId, entryId, groupId)
@@ -250,7 +656,7 @@ function Navigation.Build(settings, kind, panelId, entryId, groupId)
 	local addedHeaders = {}
 	for _, data in ipairs(settings) do
 		if data.kind == types.Collapsible then headers[data.id] = data else
-			if data.parentId == "cooldownPanelIcon" then
+			if data.parentId == "cooldownPanelIcon" and data.navigationField ~= "hoverBuffIcon" then
 				if data.name == L["CooldownPanelIconBorder"] then borderStarted = true end
 				if borderStarted then data.parentId = "cooldownPanelBorder" end
 			end
@@ -272,11 +678,21 @@ function Navigation.Build(settings, kind, panelId, entryId, groupId)
 				for _, data in pairs(controls[id] or {}) do if not data.isShown or data.isShown() then return true end end
 				return false
 			end
+			local source
+			for _, data in pairs(controls[id] or {}) do
+				if data._eqolHoverBuffModeDependent then source = data; break end
+			end
+			header._eqolHoverBuffModeDependent = source and source._eqolHoverBuffModeDependent or nil
 			settings[#settings + 1], headers[id] = header, header
 		end
 	end
 	if controls.cooldownPanelBorder and not headers.cooldownPanelBorder then
 		local header = { kind = types.Collapsible, id = "cooldownPanelBorder", name = L["Border"] }
+		local source = controls.cooldownPanelBorder[L["CooldownPanelIconBorder"]]
+		if source and source._eqolHoverBuffModeDependent then
+			header._eqolHoverBuffModeDependent = source._eqolHoverBuffModeDependent
+			header.isShown = function() return not header._eqolHoverBuffModeDependent() end
+		end
 		settings[#settings + 1], headers[header.id] = header, header
 	end
 	local bars = Panels.Bars
@@ -286,7 +702,33 @@ function Navigation.Build(settings, kind, panelId, entryId, groupId)
 		local barSuffix = barIds[id] or id:match("^eqolCooldownPanelStandaloneBar(.+)$")
 		local resetFields = barSuffix and barScopes[barSuffix] or scopes[suffix]
 		-- Tracking identity, layout mode and slot assignments are deliberately not reset.
-		if kind == "panel" and suffix == "Anchor" then
+		if id == hoverPanelGroup or id == hoverEntryGroup or header.hoverStyleFields then
+			header.navigationReset = function()
+				if InCombatLockdown() then return end
+				local panel = Panels:GetPanel(panelId)
+				if not panel then return end
+				if kind == "panel" then
+					if header.hoverStyleFields then
+						if id == hoverStyleTabs.count then panel.layout.hoverBuffCount = nil end
+						if id == hoverStyleTabs.titleFont then panel.layout.hoverBuffTitle = nil end
+						local style = panel.layout.hoverBuffStyle
+						if type(style) == "table" then
+							splitHoverStyle(style, hoverStyleSplitsByTab[id])
+							for _, field in ipairs(header.hoverStyleFields) do style[field] = nil end
+						end
+					else
+						for _, field in ipairs(hoverPanelFields) do panel.layout[field] = hoverPanelDefaults[field] end
+						local style = panel.layout.hoverBuffStyle
+						if type(style) == "table" then style.rowSpacing, style.emptySlot = nil, nil end
+					end
+				else
+					local entry = panel.entries and panel.entries[entryId]
+					if not entry then return end
+					entry.hoverBuffLabel, entry.hoverBuffIcon, entry.hoverBuffShowLabel = nil, nil, nil
+				end
+				refreshHoverBuffPanel(panelId, true)
+			end
+		elseif kind == "panel" and suffix == "Anchor" then
 			header.navigationReset = function()
 				if InCombatLockdown() then return end
 				local panel = Panels:GetPanel(panelId)
@@ -308,8 +750,10 @@ function Navigation.Build(settings, kind, panelId, entryId, groupId)
 				panel.enabled, panel.specFilter = defaults.enabled, nil
 				panel.foreverTalentFilter = nil
 				panel.foreverUseSpecFilter = nil
-				panel.layout.durationTextProfile = defaults.layout.durationTextProfile
-				panel.barDurationTextProfile = defaults.layout.durationTextProfile
+				if not (Panels.HoverBuffPanel and Panels.HoverBuffPanel:IsEnabled(panel.layout)) then
+					panel.layout.durationTextProfile = defaults.layout.durationTextProfile
+					panel.barDurationTextProfile = defaults.layout.durationTextProfile
+				end
 				refresh(kind, panelId, true)
 			end
 		elseif kind == "panel" and barSuffix and resetFields then
@@ -363,7 +807,11 @@ function Navigation.Build(settings, kind, panelId, entryId, groupId)
 				if kind == "entry" and barSuffix == "Layout" and Helper.IsBarLayout(panel.layout) then
 					fieldsToReset = { "barPanelOrientation", "barPanelWidth", "barPanelHeight", "barPanelOffsetX", "barPanelOffsetY" }
 				end
-				for _, field in ipairs(fieldsToReset) do target[field] = copy(defaults[field]) end
+				local hoverFields = kind == "panel" and Panels.HoverBuffPanel and Panels.HoverBuffPanel:IsEnabled(panel.layout) and hoverPanelGroups[id]
+				for _, field in ipairs(fieldsToReset) do
+					if not hoverFields or hoverFields[field] then target[field] = copy(defaults[field]) end
+				end
+				if hoverFields and suffix == "Icon" then target.hoverBuffIcon = nil end
 				if kind == "panel" and suffix == "CooldownText" then target.auraOverlayTextSize = defaults.auraOverlayTextSize end
 				if kind == "entry" and suffix == "Activation" and Panels.ClearEntryCustomCooldownDuration then Panels:ClearEntryCustomCooldownDuration(panelId, entryId, true) end
 				if kind == "entry" and (suffix == "Visibility" or suffix == "Display") and Helper.UpdatePanelEntrySpecFilterState then Helper.UpdatePanelEntrySpecFilterState(panel) end
@@ -468,23 +916,32 @@ function Navigation.Build(settings, kind, panelId, entryId, groupId)
 				setHint(data, display[L["Mode"]])
 			end
 		end
+		if data._eqolHoverBuffModeDependent and kind == "panel" and (not data._eqolHoverBuffModeHint or data.navigationHint ~= data._eqolHoverBuffModeHint) then
+			local originalHint = data.navigationHint
+			data._eqolHoverBuffModeHint = function()
+				if data._eqolHoverBuffModeDependent() then return L["CooldownPanelLayoutMode"], nil, "cooldownPanelLayout" end
+				if originalHint then return originalHint() end
+			end
+			data.navigationHint = data._eqolHoverBuffModeHint
+		end
 	end
 	local categories
 	if kind == "panel" then categories = {
 		category("general", L["General"], { "cooldownPanelGeneral", "cooldownPanelCopySettings" }),
-		category("layout", L["Layout"], { "cooldownPanelLayout", "cooldownPanelAnchor", "eqolCooldownBarGroups" }),
+		category("layout", L["Layout"], { "cooldownPanelLayout", hoverPanelGroup, "cooldownPanelAnchor", "eqolCooldownBarGroups" }),
 		category("bar", L["Bar"], { "eqolCooldownPanelStandaloneBar", "eqolCooldownPanelStandaloneBarLayout", "eqolCooldownPanelStandaloneBarFill", "eqolCooldownPanelStandaloneBarBorder", "eqolCooldownPanelStandaloneBarIcon" }),
-		category("icon", L["Icon"], { "cooldownPanelIcon", "cooldownPanelBorder" }),
+		category("icon", L["Icon"], { "cooldownPanelIcon", "cooldownPanelBorder", hoverStyleTabs.iconBorder, hoverStyleTabs.count }),
+		category("appearance", L["QuickCastCopyAppearance"], { hoverStyleTabs.border, hoverStyleTabs.background, hoverStyleTabs.launcherBackground }),
 		category("visibility", L["Visibility"], { "cooldownPanelVisibility", "cooldownPanelAvailability" }),
-		category("text", L["Text"], { "cooldownPanelCooldownText", "cooldownPanelStaticText", "cooldownPanelStacks", "cooldownPanelCharges", "cooldownPanelKeybinds", "eqolCooldownPanelStandaloneBarLabel", "eqolCooldownPanelStandaloneBarValueText" }),
+		category("text", L["Text"], { "cooldownPanelCooldownText", "cooldownPanelStaticText", "cooldownPanelStacks", "cooldownPanelCharges", "cooldownPanelKeybinds", "eqolCooldownPanelStandaloneBarLabel", "eqolCooldownPanelStandaloneBarValueText", hoverStyleTabs.font, hoverStyleTabs.titleFont }),
 		category("behavior", L["Behavior"], { "eqolCooldownPanelStandaloneBarCooldown", "eqolCooldownPanelStandaloneBarCharges", bars and bars.STANDALONE_STACKS_SECTION_ID or "" }),
-		category("effects", L["Effects"], { "cooldownPanelCooldownSwipe", "cooldownPanelAuraBehavior" }),
+		category("effects", L["Effects"], { "cooldownPanelCooldownSwipe", "cooldownPanelAuraBehavior", hoverStyleTabs.swipe }),
 		category("glow", L["Glow"], { "cooldownPanelGlow", "cooldownPanelGlowProc", "cooldownPanelGlowPandemic", "cooldownPanelGlowThreshold" }),
 	} elseif kind == "fixed" then categories = {
 		category("general", L["General"], { "cooldownPanelStandaloneFixedGroupGeneral", "cooldownPanelStandaloneFixedGroupLayout" }),
 		category("appearance", L["QuickCastCopyAppearance"], { "cooldownPanelStandaloneFixedGroupIcon", "cooldownPanelStandaloneFixedGroupGlow" }),
 	} else categories = {
-		category("general", L["General"], { "cooldownPanelStandaloneDisplay", "cooldownPanelStandaloneVisibility", "cooldownPanelStandaloneAvailability", "eqolCooldownPanelStandaloneBarVisibility" }),
+		category("general", L["General"], { hoverEntryGroup, "cooldownPanelStandaloneDisplay", "cooldownPanelStandaloneVisibility", "cooldownPanelStandaloneAvailability", "eqolCooldownPanelStandaloneBarVisibility" }),
 		category("bar", L["Bar"], { "eqolCooldownPanelStandaloneBar", "eqolCooldownPanelStandaloneBarLayout", "eqolCooldownPanelStandaloneBarFill", "eqolCooldownPanelStandaloneBarBorder", "eqolCooldownPanelStandaloneBarIcon" }),
 		category("icon", L["Icon"], { "cooldownPanelStandaloneIcon", "cooldownPanelStandaloneStateTexture" }),
 		category("text", L["Text"], { "cooldownPanelStandaloneCooldownText", "cooldownPanelStandaloneStaticText", "cooldownPanelStandaloneStacks", "cooldownPanelStandaloneCharges", "eqolCooldownPanelStandaloneBarLabel", "eqolCooldownPanelStandaloneBarValueText" }),

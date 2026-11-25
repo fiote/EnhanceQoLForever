@@ -208,10 +208,6 @@ if state.manualVisible == nil then
 	state.manualVisible = false
 end
 state.autoOpenedInteractionType = nil
-if state.awaitingRuleItemData == nil then
-	state.awaitingRuleItemData = false
-end
-state.pendingRuleItemDataIDs = state.pendingRuleItemDataIDs or {}
 state.bagSlotPanels = state.bagSlotPanels or {}
 state.footerRegions = state.footerRegions or {}
 
@@ -1072,50 +1068,6 @@ local function applyFramePadding(settings)
 		frame.Title:SetPoint("TOPLEFT", frame, "TOPLEFT", insideHorizontalPadding, -10)
 	end
 
-	local showCloseButton = addon.GetShowCloseButton == nil or addon.GetShowCloseButton()
-	if frame.CloseButton then
-		frame.CloseButton:ClearAllPoints()
-		frame.CloseButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -insideHorizontalPadding + 4, -4)
-		frame.CloseButton:SetShown(showCloseButton)
-	end
-
-	if frame.SettingsButton then
-		frame.SettingsButton:ClearAllPoints()
-		if showCloseButton and frame.CloseButton then
-			frame.SettingsButton:SetPoint("RIGHT", frame.CloseButton, "LEFT", -4, 0)
-		else
-			frame.SettingsButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -insideHorizontalPadding, -8)
-		end
-	end
-	if frame.SortButton then
-		frame.SortButton:ClearAllPoints()
-		frame.SortButton:SetPoint("RIGHT", frame.SettingsButton or frame, frame.SettingsButton and "LEFT" or "RIGHT", frame.SettingsButton and -6 or -insideHorizontalPadding, frame.SettingsButton and 0 or -8)
-	end
-	addon.Bags.SortMode.Refresh(frame)
-	if frame.SortModeButton then
-		frame.SortModeButton:ClearAllPoints()
-		frame.SortModeButton:SetPoint("RIGHT", frame.SortButton or frame.SettingsButton, "LEFT", -6, 0)
-	end
-	if frame.BagSlotsButton then
-		frame.BagSlotsButton:ClearAllPoints()
-		local anchor = frame.SortModeButton and frame.SortModeButton:IsShown() and frame.SortModeButton or frame.SortButton or frame.SettingsButton
-		frame.BagSlotsButton:SetPoint("RIGHT", anchor or frame, anchor and "LEFT" or "RIGHT", anchor and -8 or -insideHorizontalPadding, anchor and 0 or -8)
-	end
-	if frame.VendorListsButton then
-		frame.VendorListsButton:ClearAllPoints()
-		frame.VendorListsButton:SetPoint("RIGHT", frame.BagSlotsButton, "LEFT", -8, 0)
-	end
-
-	if frame.OfflineBankButton then
-		frame.OfflineBankButton:ClearAllPoints()
-		frame.OfflineBankButton:SetPoint("RIGHT", frame.VendorListsButton, "LEFT", -8, 0)
-	end
-
-	if frame.SearchBox then
-		frame.SearchBox:ClearAllPoints()
-		frame.SearchBox:SetPoint("TOPLEFT", frame.Title, "TOPRIGHT", 18, 2)
-		frame.SearchBox:SetPoint("TOPRIGHT", frame.OfflineBankButton or frame.VendorListsButton or frame.BagSlotsButton or frame.SettingsButton, "TOPLEFT", -10, -1)
-	end
 	if frame.BagSlotsPanel then
 		frame.BagSlotsPanel:ClearAllPoints()
 		frame.BagSlotsPanel:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -insideHorizontalPadding, -(Core.HEADER_HEIGHT + outsideHeaderPadding))
@@ -1132,7 +1084,8 @@ local function applyFramePadding(settings)
 		frame.Footer:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", insideHorizontalPadding, 0)
 		frame.Footer:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -insideHorizontalPadding, 0)
 	end
-	if Bags.Toolbar then Bags.Toolbar.Attach(frame) end
+	Bags.SortMode.Refresh(frame)
+	Bags.Toolbar.Attach(frame, insideHorizontalPadding)
 end
 
 local function unpackSkinColor(color, defaultR, defaultG, defaultB, defaultA)
@@ -2412,6 +2365,84 @@ local function formatFooterMoneyString(amount)
 	return tostring(amount)
 end
 
+function Bags.GetAuctionSales()
+	local sales = addon.Vendor and addon.Vendor.AuctionSales
+	if sales and sales:IsEnabled() then return sales end
+end
+
+function Core.GetAuctionFooter(footer, settings)
+	local button = footer.AuctionValueButton
+	local sales = settings.showAuctionValue and Bags.GetAuctionSales()
+	if not sales then
+		if button then button:Hide() end
+		return
+	end
+	if not button then
+		button = CreateFrame("Button", nil, footer.ExternalLeftContainer)
+		button:SetHeight(Core.FOOTER_ROW_HEIGHT)
+		button.Text = button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+		button.Text:SetPoint("LEFT")
+		button:SetScript("OnClick", function()
+			local auctionSales = Bags.GetAuctionSales()
+			if auctionSales then auctionSales:TogglePanel() end
+		end)
+		button:SetScript("OnEnter", function(control) Core.ShowAuctionValueTooltip(control) end)
+		button:SetScript("OnLeave", function(control) if GameTooltip:IsOwned(control) then GameTooltip:Hide() end end)
+		button:SetScript("OnHide", button:GetScript("OnLeave"))
+		footer.AuctionValueButton = button
+		state.auctionValueDirty = true
+	end
+	local showDelta = settings.showAuctionValueDelta == true
+	if state.auctionValueDirty or button.showDelta ~= showDelta then
+		button.total, button.top, button.market, button.delta = sales:GetBagValue(showDelta)
+		button.showDelta = showDelta
+		state.auctionValueDirty = false
+	end
+	button.Text:SetFont(footer.MoneyText:GetFont())
+	local amount = button.total and button.total > 0 and formatFooterMoneyString(button.total) or "—"
+	button.Text:SetText(L["vendorAuctionBagValue"] .. "  " .. amount)
+	button:SetWidth(math.ceil(button.Text:GetStringWidth()))
+	if GameTooltip:IsOwned(button) then Core.ShowAuctionValueTooltip(button) end
+	return button
+end
+
+function Core.ShowAuctionValueTooltip(button)
+	local tooltip = GameTooltip
+	tooltip:SetOwner(button, "ANCHOR_TOP")
+	tooltip:ClearLines()
+	local title = "|TInterface\\Icons\\INV_Misc_Coin_01:16:16|t " .. L["vendorAuctionBagValueTitle"]
+	if button.top and #button.top > 0 then
+		tooltip:AddDoubleLine(title, formatFooterMoneyString(button.total), 1, 0.82, 0, 1, 1, 1)
+		local faction = UnitFactionGroup("player")
+		local market = button.market
+		if faction == "Horde" or faction == "Alliance" then
+			market = CreateAtlasMarkup("UI-HUD-UnitFrame-Player-PVP-" .. faction .. "Icon", 14, 14) .. " " .. market
+		end
+		tooltip:AddLine(market, 0.75, 0.78, 0.84)
+		local sales = button.delta and Bags.GetAuctionSales()
+		if sales then
+			local amount, r, g, b = sales:FormatVendorDelta(button.delta, formatFooterMoneyString)
+			tooltip:AddDoubleLine(L["vendorAuctionBagValueDelta"], amount, 0.8, 0.83, 0.88, r, g, b)
+		end
+		tooltip:AddLine(" ")
+		tooltip:AddLine(L["vendorAuctionBagValueTop"], 1, 0.82, 0)
+		for _, row in ipairs(button.top) do
+			local icon = row.icon or C_Item.GetItemIconByID(row.key.itemID) or 134400
+			local name = row.link:match("|h%[(.-)%]|h") or row.link
+			local quality = row.quality and ITEM_QUALITY_COLORS[row.quality]
+			if quality then name = quality.hex .. name .. "|r" end
+			local stack = ("|T%s:16:16|t %s |cffbfc5d0×%d|r"):format(icon, name, row.count)
+			tooltip:AddDoubleLine(stack, formatFooterMoneyString(row.value), 1, 1, 1, 1, 1, 1)
+		end
+	else
+		tooltip:SetText(title)
+		tooltip:AddLine(L["vendorAuctionBagValueUnavailable"], 1, 1, 1, true)
+	end
+	tooltip:AddLine(" ")
+	tooltip:AddLine(L["vendorAuctionBagValueOpen"], 0.5, 0.75, 1)
+	tooltip:Show()
+end
+
 local function getTrackedCharacterDisplayName(entry)
 	local name = entry and entry.name or UNKNOWN
 	local realm = entry and entry.realm
@@ -2430,12 +2461,50 @@ local function getTrackedCharacterColor(classToken)
 	return classColors and classToken and classColors[classToken] or nil
 end
 
+local function addTrackedCharacterMoneyLine(tooltip, entry)
+	local color = getTrackedCharacterColor(entry.class)
+	local r, g, b = 1, 1, 1
+	if color then r, g, b = color.r or 1, color.g or 1, color.b or 1 end
+	tooltip:AddDoubleLine(getTrackedCharacterDisplayName(entry), formatFooterMoneyString(entry.money), r, g, b, 1, 1, 1)
+end
+
+local function addFactionMoneyGroups(tooltip, entries)
+	local groups = {}
+	for _, entry in ipairs(entries) do
+		local faction = entry.faction
+		if faction ~= "Alliance" and faction ~= "Horde" then faction = "Unknown" end
+		local group = groups[faction]
+		if not group then
+			group = { entries = {}, total = 0 }
+			groups[faction] = group
+		end
+		group.entries[#group.entries + 1] = entry
+		group.total = group.total + entry.money
+	end
+
+	local labels = { Alliance = FACTION_ALLIANCE, Horde = FACTION_HORDE, Unknown = UNKNOWN }
+	local order = entries[1].isCurrent and entries[1].faction == "Horde" and { "Horde", "Alliance", "Unknown" } or { "Alliance", "Horde", "Unknown" }
+	local shown = false
+	for _, faction in ipairs(order) do
+		local group = groups[faction]
+		if group then
+			if shown then tooltip:AddLine(" ") end
+			tooltip:AddDoubleLine(labels[faction], formatFooterMoneyString(group.total), 1, 0.82, 0, 1, 1, 1)
+			for _, entry in ipairs(group.entries) do
+				addTrackedCharacterMoneyLine(tooltip, entry)
+			end
+			shown = true
+		end
+	end
+end
+
 local function showFooterMoneyTooltip(owner)
 	if not owner then
 		return
 	end
 
-	local entries = addon.GetTrackedCharacterGoldEntries and addon.GetTrackedCharacterGoldEntries() or {}
+	local isForever = addon.variables.isForever and not addon.variables.isTBC
+	local entries = addon.GetTrackedCharacterGoldEntries and addon.GetTrackedCharacterGoldEntries(isForever) or {}
 	local warbandGold = addon.GetWarbandGold and addon.GetWarbandGold() or 0
 	GameTooltip:SetOwner(owner, "ANCHOR_TOP")
 	GameTooltip:SetText(L["settingsTrackedCharacters"] or "Tracked characters", 1, 0.82, 0)
@@ -2466,25 +2535,16 @@ local function showFooterMoneyTooltip(owner)
 		GameTooltip:AddLine(" ")
 	end
 
+	if isForever then
+		addFactionMoneyGroups(GameTooltip, entries)
+		GameTooltip:Show()
+		return
+	end
+
 	local totalMoney = 0
 	for _, entry in ipairs(entries) do
 		totalMoney = totalMoney + (tonumber(entry.money) or 0)
-		local name = getTrackedCharacterDisplayName(entry)
-		local color = getTrackedCharacterColor(entry.class)
-		local leftR, leftG, leftB = 1, 1, 1
-		if color then
-			leftR, leftG, leftB = color.r or 1, color.g or 1, color.b or 1
-		end
-		GameTooltip:AddDoubleLine(
-			name,
-			formatFooterMoneyString(entry.money),
-			leftR,
-			leftG,
-			leftB,
-			1,
-			1,
-			1
-		)
+		addTrackedCharacterMoneyLine(GameTooltip, entry)
 	end
 
 	GameTooltip:AddLine(" ")
@@ -5270,14 +5330,7 @@ local function resolveCategoryForItem(bagID, slotID, info, questInfo, settings, 
 			ruleItemInfo = ruleRuntimeContext and ruleRuntimeContext.hasUsage and getCachedRuleItemInfo(itemRef) or nil
 			if ruleRuntimeContext and ruleRuntimeContext.hasUsage and itemRef and not (ruleItemInfo and ruleItemInfo.loaded) then
 				stable = false
-				state.awaitingRuleItemData = true
-				local itemID = tonumber(info and info.itemID)
-				if itemID and itemID > 0 then
-					state.pendingRuleItemDataIDs[itemID] = true
-					if C_Item and C_Item.RequestLoadItemDataByID then
-						C_Item.RequestLoadItemDataByID(itemID)
-					end
-				end
+				if Bags.ItemRules then Bags.ItemRules.RequestMetadata(info.itemID) end
 			end
 
 			local resolvedItemLevel
@@ -6002,6 +6055,8 @@ local function layoutFooter(layoutData, frameWidth)
 
 	applyConfiguredFrameFonts()
 	applyFramePadding(settings)
+	local auctionValue = Core.GetAuctionFooter(footer, settings)
+	if auctionValue then externalLeftRegions[#externalLeftRegions + 1] = { region = auctionValue } end
 
 	footer.NormalSlotsText:ClearAllPoints()
 	footer.ReagentSlotsText:ClearAllPoints()
@@ -6761,12 +6816,6 @@ local function rebuildLayout()
 		return false
 	end
 
-	state.awaitingRuleItemData = false
-	if wipe then
-		wipe(state.pendingRuleItemDataIDs)
-	else
-		state.pendingRuleItemDataIDs = {}
-	end
 	state.stackCountOrderDirty = nil
 	local layoutData = buildLayoutData()
 	state.searchMatchedSections = layoutData.searchMatchedSections
@@ -6980,6 +7029,7 @@ local function processUpdate()
 	setActiveBagEventRegistration(shouldBeVisible)
 	if openingFrame then
 		state.footerDirty = true
+		state.auctionValueDirty = true
 		state.forceDynamicRefresh = true
 		if clearAcknowledgedOpenSessionNewItems() then
 			state.pendingRebuild = true
@@ -7079,6 +7129,12 @@ Bags.API.RequestLayoutRefresh = function()
 	state.footerDirty = true
 	scheduleUpdate(true, false, true)
 	return true
+end
+
+function Bags.functions.RefreshAuctionValue(force)
+	if not force and not getSettings().showAuctionValue then return end
+	state.auctionValueDirty, state.footerDirty = true, true
+	scheduleUpdate(true, false)
 end
 
 Bags.API.RegisterFooterRegion = function(id, region, options)
@@ -7421,6 +7477,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
 		markBagStale(bagID)
 	elseif event == "BAG_UPDATE_DELAYED" then
 		if (state.staleBagCount or 0) > 0 then
+			Bags.functions.RefreshAuctionValue()
 			scheduleUpdate(false, false)
 		end
 	elseif event == "BAG_NEW_ITEMS_UPDATED" then
@@ -7431,11 +7488,9 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
 		end
 		scheduleUpdate(true, requestRebuild)
 	elseif event == "ITEM_DATA_LOAD_RESULT" then
-		local itemID, success = ...
-		if success and (state.pendingRuleItemDataIDs[itemID] or state.awaitingRuleItemData) then
-			state.pendingRuleItemDataIDs[itemID] = nil
-			scheduleUpdate(true, true)
-		elseif success then
+		local _, success = ...
+		if success then
+			Bags.functions.RefreshAuctionValue()
 			scheduleUpdate(true, false)
 		end
 	elseif event == "TOYS_UPDATED" or event == "NEW_TOY_ADDED" then
@@ -7473,6 +7528,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
 		refreshVisibleFooterCurrencyTooltip()
 		scheduleUpdate(true, false)
 	elseif event == "ITEM_LOCK_CHANGED" then
+		Bags.functions.RefreshAuctionValue()
 		scheduleUpdate(true, false)
 	elseif event == "BAG_UPDATE_COOLDOWN" then
 		Core.ScheduleButtonCooldownRefresh()

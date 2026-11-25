@@ -28,6 +28,7 @@ local function createRootSlashCommandHints(category)
 					commands = { "/eqol" },
 					desc = L["rootSlashCommandSettingsDesc"] or "Open the EnhanceQoL settings.",
 				},
+				{ commands = { "/eqol guide" }, desc = L["FirstStepsTitle"] },
 				{
 					commands = { "/rl" },
 					desc = L["rootSlashCommandReloadUIDesc"] or "Reload UI.",

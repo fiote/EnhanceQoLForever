@@ -232,6 +232,71 @@ local function buildSettings()
 
 	local auctionHouseSection = addon.SettingsLayout.vendorEconomyAuctionHouseSection
 	if auctionHouseSection then
+		if addon.variables.isForever and not addon.variables.isTBC then
+			addon.functions.SettingsCreateSectionHeader(cVendor, L["vendorAuctionSales"], {
+				id = "vendorAuctionSalesSection",
+				newTagID = "vendorAuctionSalesSection",
+				parentSection = auctionHouseSection,
+			})
+			local sales = addon.functions.SettingsCreateCheckbox(cVendor, {
+				var = "vendorAuctionSales",
+				newTagID = "vendorAuctionSales",
+				text = L["vendorAuctionSales"],
+				desc = L["vendorAuctionSalesDesc"],
+				default = false,
+				parentSection = auctionHouseSection,
+				func = function(value)
+					addon.db.vendorAuctionSales = value == true
+					if addon.Vendor.AuctionSales then addon.Vendor.AuctionSales:ApplySettings() end
+				end,
+			})
+			addon.functions.SettingsCreateCheckbox(cVendor, {
+				var = "vendorAuctionPriceTooltip",
+				newTagID = "vendorAuctionPriceTooltip",
+				text = L["vendorAuctionPriceTooltip"],
+				desc = L["vendorAuctionPriceTooltipDesc"],
+				default = true,
+				parent = true,
+				element = sales.element,
+				parentCheck = function() return isChecked("vendorAuctionSales") end,
+				parentSection = auctionHouseSection,
+			})
+			addon.functions.SettingsCreateCheckbox(cVendor, {
+				var = "vendorAuctionHistoryTooltip",
+				newTagID = "vendorAuctionHistoryTooltip",
+				text = L["vendorAuctionHistoryTooltip"],
+				desc = L["vendorAuctionHistoryTooltipDesc"],
+				default = false,
+				parent = true,
+				element = sales.element,
+				parentCheck = function() return isChecked("vendorAuctionSales") end,
+				parentSection = auctionHouseSection,
+			})
+			addon.functions.SettingsCreateDropdown(cVendor, {
+				var = "vendorAuctionDateFormat",
+				newTagID = "vendorAuctionDateFormat",
+				text = L["vendorAuctionDateFormat"],
+				desc = L["vendorAuctionDateFormatDesc"],
+				list = { auto = L["Automatic"], dayFirst = "23.04. 18:10", monthFirst = "04/23 18:10", iso = "2026-04-23 18:10" },
+				orderList = { "auto", "dayFirst", "monthFirst", "iso" },
+				default = "auto",
+				parent = true,
+				element = sales.element,
+				parentCheck = function() return isChecked("vendorAuctionSales") end,
+				parentSection = auctionHouseSection,
+				set = function(value)
+					addon.db.vendorAuctionDateFormat = value
+					local auction = addon.Vendor.AuctionSales
+					if auction then
+						auction:UpdateScanDisplay()
+						auction:Refresh()
+					end
+				end,
+			})
+			local bags = addon.Bags and addon.Bags.functions
+			if bags and bags.RegisterAuctionValueSettings then bags.RegisterAuctionValueSettings() end
+		end
+
 		local craftTitle = L["vendorCraftShopperTitle"] or "Craft Shopper"
 		local craftEnableText = L["vendorCraftShopperEnable"] or "Enable Craft Shopper"
 		local craftEnableDesc = L["vendorCraftShopperEnableDesc"]

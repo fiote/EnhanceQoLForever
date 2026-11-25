@@ -2127,6 +2127,7 @@ local function hookBagFrame(frame)
 end
 
 function addon.Vendor.functions.InitState()
+	if addon.Vendor.AuctionSales then addon.Vendor.AuctionSales:ApplySettings() end
 	if addon.Vendor.functions.RefreshNativeJunkIcons then addon.Vendor.functions.RefreshNativeJunkIcons() end
 	if addon.Vendor.functions.InitFilterState then addon.Vendor.functions.InitFilterState() end
 	if addon.Vendor.variables.vendorInitialized then return end

@@ -41,6 +41,8 @@ function Reminder:GetForeverWeaponEnchant(slot, class, enchantId)
 		weaponSlot = Enum.WeaponSlot.MainHand
 	elseif slot == (_G.INVSLOT_OFFHAND or 17) then
 		weaponSlot = Enum.WeaponSlot.OffHand
+	elseif slot == (_G.INVSLOT_RANGED or 18) and Enum.WeaponSlot.Ranged then
+		weaponSlot = Enum.WeaponSlot.Ranged
 	else
 		return nil
 	end
@@ -57,7 +59,7 @@ function Reminder:GetForeverWeaponEnchant(slot, class, enchantId)
 			elseif active == true and (kind == Enum.ItemEnchantType.Temporary or kind == Enum.ItemEnchantType.Imbue) then
 				local id, remaining = plain(enchant.enchantID), plain(enchant.timeLeft)
 				local data = id and self.foreverWeaponEnchants[id]
-				if remaining == nil or (class and id == nil) then
+				if remaining == nil or ((class or enchantId) and id == nil) then
 					unknown = true
 				elseif (not class or (data and data.class == class)) and (not enchantId or id == enchantId) then
 					-- Multiple slots may contain independent temporary enchants.

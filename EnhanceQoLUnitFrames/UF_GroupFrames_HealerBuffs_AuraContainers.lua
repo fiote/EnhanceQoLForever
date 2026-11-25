@@ -887,7 +887,8 @@ function HB.ApplyManagedAuraContainer(button, prepareOnly, forceRefresh)
 	local unit = button._eqolUnit or (prepareOnly and "player")
 	local config = button._eqolCfg
 	local kind = button._eqolGroupKind or "party"
-	local compiled = config and type(HB.GetCompiled) == "function" and HB.GetCompiled(kind, config) or nil
+	local getCompiled = HB.GetCompiledForUnit or HB.GetCompiled
+	local compiled = config and getCompiled and getCompiled(kind, config, unit) or nil
 	local auraType = type(HB.GetUnitAuraType) == "function" and HB.GetUnitAuraType(unit) or nil
 	if state then state._healerBuffPlacementAuraType = auraType end
 	if not (managed and root and unit and auraType and compiled and compiled.enabled) then

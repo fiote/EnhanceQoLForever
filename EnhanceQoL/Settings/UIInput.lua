@@ -801,20 +801,6 @@ local data = {
 addon.functions.SettingsCreateCheckboxes(cUIInput, data)
 
 if addon.functions and addon.functions.SettingsCreateClassSpecificResourceBars then addon.functions.SettingsCreateClassSpecificResourceBars(cUIInput, barsResourcesExpandable) end
-if addon.variables.isForever and not addon.variables.isTBC and select(2, UnitClass("player")) == "SHAMAN" then
-	addon.functions.SettingsCreateCheckbox(cUIInput, {
-		var = "shaman_HideTotemActionBar",
-		text = L["shaman_HideTotemActionBar"],
-		default = false,
-		get = function() return addon.db.shaman_HideTotemActionBar == true end,
-		func = function(value)
-			addon.db.shaman_HideTotemActionBar = value == true
-			addon.functions.UpdateBlizzardTotemVisibility()
-		end,
-		parentSection = barsResourcesExpandable,
-		newTagID = "shaman_HideTotemActionBar",
-	})
-end
 if addon.PersonalResourceComboPoints then
 	addon.functions.SettingsCreateCheckbox(cUIInput, {
 		var = "personalResourceComboPointsCentered",

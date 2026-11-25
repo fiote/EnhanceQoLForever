@@ -1461,6 +1461,10 @@ local function setFrameRule(info, key, shouldSelect)
 
 	addon.functions.NormalizeVisibilityTargetRules(working, key)
 	local normalized = NormalizeUnitFrameVisibilityConfig(info.var, working)
+	if info.applyRules then
+		info.applyRules()
+		return
+	end
 	if wasAlwaysHidden and not (normalized and normalized.ALWAYS_HIDDEN == true) then
 		addon.variables.requireReload = true
 		if addon.functions and addon.functions.checkReloadFrame then addon.functions.checkReloadFrame() end
@@ -1739,6 +1743,16 @@ local function createFrameCategory()
 	for _, info in ipairs(addon.variables.unitFrameNames or {}) do
 		table.insert(frames, info)
 	end
+	if addon.variables.isForever and not addon.variables.isTBC then
+		addon.functions.CleanupTotemActionBarProfile(addon.db)
+		frames[#frames + 1] = {
+			name = "MultiCastActionBarFrame",
+			var = "actionBarTotemVisibility",
+			text = L["shaman_TotemActionBar"],
+			newTagID = "shaman_TotemActionBarVisibility",
+			applyRules = addon.functions.UpdateBlizzardTotemVisibility,
+		}
+	end
 	table.sort(frames, function(a, b) return (a.text or a.name or "") < (b.text or b.name or "") end)
 
 	for _, info in ipairs(frames) do
@@ -1746,7 +1760,7 @@ local function createFrameCategory()
 			local options = getFrameRuleOptions(info)
 			local newVisibilityTag = info.newTagID
 			for _, option in ipairs(options) do
-				if option.value == "PLAYER_HAS_ATTACKABLE_TARGET" then newVisibilityTag = "visibilityAttackableTarget"; break end
+				if not info.applyRules and option.value == "PLAYER_HAS_ATTACKABLE_TARGET" then newVisibilityTag = "visibilityAttackableTarget"; break end
 			end
 			if #options > 0 then
 				local function shouldShow() return shouldShowBlizzardFrameVisibility(info) end

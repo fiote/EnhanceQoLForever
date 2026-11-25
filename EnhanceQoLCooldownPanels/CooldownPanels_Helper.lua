@@ -185,6 +185,14 @@ Helper.LayoutModeOptions = {
 	{ value = "RADIAL", label = L["CooldownPanelLayoutModeRadial"] or "Radial" },
 	{ value = "BAR", label = L["CooldownPanelLayoutModeBar"] },
 }
+function Helper.GetLayoutModeOptions()
+	local hover = CooldownPanels.HoverBuffPanel
+	if not (hover and hover:IsAvailable()) then return Helper.LayoutModeOptions end
+	local options = { unpack(Helper.LayoutModeOptions) }
+	options[#options + 1] = { value = "HOVER_BUFF", label = L["CooldownPanelHoverBuffMode"] }
+	return options
+end
+
 Helper.AnchorOptions = {
 	{ value = "TOPLEFT", label = L["Top Left"] or "Top Left" },
 	{ value = "TOP", label = DIRECTION_TOP_LABEL },
@@ -666,6 +674,7 @@ function Helper.ResolveTextureInput(value)
 end
 
 Helper.VALID_LAYOUT_MODES = {
+	HOVER_BUFF = true,
 	GRID = true,
 	FIXED = true,
 	RADIAL = true,
@@ -3027,6 +3036,9 @@ function Helper.NormalizePanel(panel, defaults)
 	if type(panel.layout) ~= "table" then panel.layout = {} end
 	Helper.InvalidateBarPanelStyle(panel.layout)
 	Helper.InvalidateFixedLayoutCache(panel)
+	if panel.layout.hoverBuffPanel == true and CooldownPanels.HoverBuffPanel then panel.layout.layoutMode = "HOVER_BUFF" end
+	panel.layout.hoverBuffPanel = nil
+	if panel.layout.layoutMode == "HOVER_BUFF" and not CooldownPanels.HoverBuffPanel then panel.layout.layoutMode = "GRID" end
 	local hadKeybindsEnabled = panel.layout.keybindsEnabled
 	local hadChargesCooldown = panel.layout.showChargesCooldown
 	for key, value in pairs(layoutDefaults) do
