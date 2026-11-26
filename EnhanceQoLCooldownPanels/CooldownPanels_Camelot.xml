@@ -7,6 +7,7 @@
 	<Script file="CooldownPanels_ClassFilters_Camelot.lua" />
 	<Script file="CooldownPanels_AnchorHelper.lua" />
 	<Script file="CooldownPanels_Stance_Camelot.lua" />
+	<Script file="CooldownPanels_EquipmentSets_Camelot.lua" />
 	<Script file="CooldownPanels_AutoDurations.lua" />
 	<Script file="CooldownPanels_SpellAutoDurations.lua" />
 	<Script file="CooldownPanels_ActiveProcTriggers.lua" />

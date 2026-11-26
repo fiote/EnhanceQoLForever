@@ -1531,6 +1531,7 @@ function CooldownPanels:GetEntrySpecFilteredOrder(panelId, panel, sourceOrder, c
 	local runtime = getRuntime(panelId)
 	local generation = Helper.GetPanelEntrySpecFilterGeneration and Helper.GetPanelEntrySpecFilterGeneration(panel) or 0
 	local currentStance = self:GetCurrentStanceFilterValue()
+	local equipmentGeneration = self:GetEquipmentSetFilterGeneration()
 	if
 		runtime._eqolEntrySpecFilterOrder
 		and runtime._eqolEntrySpecFilterSourceOrder == sourceOrder
@@ -1538,6 +1539,7 @@ function CooldownPanels:GetEntrySpecFilteredOrder(panelId, panel, sourceOrder, c
 		and runtime._eqolEntrySpecFilterGeneration == generation
 		and runtime._eqolEntrySpecFilterSpecId == currentSpecId
 		and runtime._eqolEntrySpecFilterStance == currentStance
+		and runtime._eqolEntrySpecFilterEquipmentGeneration == equipmentGeneration
 	then
 		return runtime._eqolEntrySpecFilterOrder
 	end
@@ -1556,6 +1558,7 @@ function CooldownPanels:GetEntrySpecFilteredOrder(panelId, panel, sourceOrder, c
 	runtime._eqolEntrySpecFilterGeneration = generation
 	runtime._eqolEntrySpecFilterSpecId = currentSpecId
 	runtime._eqolEntrySpecFilterStance = currentStance
+	runtime._eqolEntrySpecFilterEquipmentGeneration = equipmentGeneration
 	return filteredOrder
 end
 
@@ -4204,6 +4207,7 @@ cdp.ENTRY.STYLE_CLIPBOARD = {
 		foreverTalentFilter = true,
 		foreverUseSpecFilter = true,
 		stanceFilter = true,
+		equipmentSetFilter = true,
 		heroSpecID = true,
 		heroSpecFilter = true,
 		heroSpecEnabled = true,
@@ -4395,7 +4399,9 @@ function cdp.ENTRY.CopyStyleValue(value) return Helper.CopyTableDeep(value) end
 -- Keep imported specialization IDs separate from Forever talent-group filters.
 local function getPlayerClassSpecMap() return nil end
 local function panelHasSpecFilter() return false end
-function CooldownPanels.EntryHasSpecFilter(entry) return (entry and entry.stanceFilter ~= nil) or CooldownPanels:HasPanelClassFilter(entry) end
+function CooldownPanels.EntryHasSpecFilter(entry)
+	return (entry and (entry.stanceFilter ~= nil or entry.equipmentSetFilter ~= nil)) or CooldownPanels:HasPanelClassFilter(entry)
+end
 
 local function panelHasRuntimeEntries(panel)
 	if type(panel) ~= "table" or type(panel.entries) ~= "table" then return false end
@@ -4415,10 +4421,10 @@ function CooldownPanels.EntryAllowsSpec(entry)
 	return CooldownPanels:PanelAllowsClass(entry)
 end
 
--- Stance/form controls the live panel only; editor availability must not
--- change when the player switches stance.
+-- Stance/form and equipment sets control the live panel only; editor
+-- availability must not change when the player switches gear or stance.
 function CooldownPanels.EntryAllowsRuntimeFilters(entry)
-	return CooldownPanels.EntryAllowsSpec(entry) and CooldownPanels:EntryAllowsStance(entry)
+	return CooldownPanels.EntryAllowsSpec(entry) and CooldownPanels:EntryAllowsStance(entry) and CooldownPanels:EntryAllowsEquipmentSet(entry)
 end
 
 local function panelMatchesPlayerClass(panel) return CooldownPanels:PanelAllowsClass(panel) end
@@ -16542,6 +16548,25 @@ function CooldownPanels:OpenLayoutEntryStandaloneMenu(panelId, entryId, anchorFr
 						local _, currentEntry = getEntry()
 						return (currentEntry and currentEntry.stanceFilter or "__all") == option.value
 					end, function() CooldownPanels:SetEntryStanceFilter(panelId, entryId, option.value) end)
+				end
+			end,
+		},
+		{
+			name = L["CooldownPanelEquipmentSetFilter"],
+			tooltip = L["CooldownPanelEquipmentSetFilterTooltip"],
+			kind = SettingType.Dropdown,
+			parentId = "cooldownPanelStandaloneDisplay",
+			navigationField = "equipmentSetFilter",
+			default = "__all",
+			height = 260,
+			get = function() return CooldownPanels:GetEntryEquipmentSetFilterSelection(select(2, getEntry())) end,
+			set = function(_, value) CooldownPanels:SetEntryEquipmentSetFilter(panelId, entryId, value) end,
+			generator = function(_, root)
+				for _, option in ipairs(CooldownPanels:GetEntryEquipmentSetFilterOptions(select(2, getEntry()))) do
+					local radio = root:CreateRadio(option.text, function()
+						return CooldownPanels:GetEntryEquipmentSetFilterSelection(select(2, getEntry())) == option.value
+					end, function() CooldownPanels:SetEntryEquipmentSetFilter(panelId, entryId, option.value) end)
+					if option.disabled and radio.SetEnabled then radio:SetEnabled(false) end
 				end
 			end,
 		},
@@ -33607,6 +33632,8 @@ CooldownPanels.UPDATE_FRAME_EVENTS = {
 	"TRAIT_CONFIG_UPDATED",
 	"TRAIT_CONFIG_LIST_UPDATED",
 	"PLAYER_EQUIPMENT_CHANGED",
+	"EQUIPMENT_SETS_CHANGED",
+	"EQUIPMENT_SWAP_FINISHED",
 	"UPDATE_INVENTORY_DURABILITY",
 	"PLAYER_MOUNT_DISPLAY_CHANGED",
 	"ZONE_CHANGED_NEW_AREA",
@@ -33643,6 +33670,8 @@ CooldownPanels.UPDATE_FRAME_EVENTS = {
 }
 
 CooldownPanels.UPDATE_FRAME_PASSIVE_EVENTS = {
+	"EQUIPMENT_SETS_CHANGED",
+	"EQUIPMENT_SWAP_FINISHED",
 	"PLAYER_ENTERING_WORLD",
 	"PLAYER_LOGIN",
 	"UI_SCALE_CHANGED",
@@ -33937,6 +33966,10 @@ function CooldownPanels.EnsureUpdateFrame()
 	if CooldownPanels.ensureAssistedHighlightCVarListener then CooldownPanels.ensureAssistedHighlightCVarListener() end
 	local frame = CreateFrame("Frame")
 	frame:SetScript("OnEvent", function(_, event, ...)
+		if event == "PLAYER_EQUIPMENT_CHANGED" or event == "EQUIPMENT_SETS_CHANGED" or event == "EQUIPMENT_SWAP_FINISHED" then
+			CooldownPanels:InvalidateEquipmentSetFilters()
+			if event == "EQUIPMENT_SETS_CHANGED" then refreshStandaloneSettings() end
+		end
 		if not CooldownPanels.assistedHighlightHooked and ensureAssistedHighlightHook then ensureAssistedHighlightHook() end
 		if CooldownPanels.ensureAssistedHighlightCVarListener then CooldownPanels.ensureAssistedHighlightCVarListener() end
 		if event == "PLAYER_TARGET_CHANGED" or event == "UNIT_FACTION" then

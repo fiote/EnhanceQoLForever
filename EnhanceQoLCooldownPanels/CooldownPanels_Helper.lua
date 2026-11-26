@@ -3276,6 +3276,7 @@ function Helper.NormalizeEntry(entry, defaults)
 	if entry.showCooldown == nil then entry.showCooldown = true end
 	if not hadShowCooldownTextUseGlobal or type(entry.showCooldownTextUseGlobal) ~= "boolean" then entry.showCooldownTextUseGlobal = entry.showCooldownText ~= false end
 	Helper.NormalizeHeroSpecFilter(entry)
+	if CooldownPanels.NormalizeEntryEquipmentSetFilter then CooldownPanels:NormalizeEntryEquipmentSetFilter(entry) end
 	if type(entry.stanceFilter) ~= "string" or entry.stanceFilter == "" or entry.stanceFilter == "__all" then entry.stanceFilter = nil end
 	if type(entry.specFilter) == "table" then
 		local cleanedSpecFilter

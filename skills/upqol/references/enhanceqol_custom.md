@@ -34,6 +34,18 @@ Arquivos principais: `CooldownPanels_Stance_Camelot.lua`, `CooldownPanels_Camelo
 
 Foram executados testes Lua de sintaxe, seleção/reset, cache após troca de postura, reordenação/substituição das formas, combinação com classe/spec e preservação da lista de edição. O usuário confirmou o filtro no jogo e relatou a falha da lista lateral; a correção foi implementada e testada em Lua antes do commit. Não há confirmação posterior de teste visual dessa correção.
 
+### Conjunto de equipamento salvo por spell — 26/11/2026
+
+Em **Spells → General → Display**, **Show only with equipment set** lista os conjuntos salvos no Gerenciador de Equipamentos do personagem, com uma opção sem restrição. O filtro usa `C_EquipmentSet.GetEquipmentSetInfo` para saber se o conjunto está equipado, respeitando os slots ignorados pelo gerenciador. Conjuntos parcialmente equipados não satisfazem a restrição.
+
+A seleção fica vinculada ao ID do conjunto e ao personagem, evitando correspondências acidentais de IDs em perfis compartilhados. Renomear o conjunto mantém a seleção; se ele for removido ou pertencer a outro personagem, a seleção aparece indisponível e pode ser limpa ou substituída. O filtro combina com classe/spec e stance e vale somente para o painel no jogo. A lista lateral de edição e o preview do Hover Buff Panel continuam completos.
+
+A cache da ordem é invalidada em `PLAYER_EQUIPMENT_CHANGED`, `EQUIPMENT_SWAP_FINISHED` e `EQUIPMENT_SETS_CHANGED`. O reset de Display limpa a restrição; copiar estilo não transfere a identidade do conjunto. Não há alteração nem troca automática de equipamentos.
+
+Arquivos principais: novo `EnhanceQoLCooldownPanels/CooldownPanels_EquipmentSets_Camelot.lua`, seu carregamento em `CooldownPanels_Camelot.xml`, integração em `CooldownPanels_Camelot.lua`, `CooldownPanels_Helper.lua` e `Navigation.lua`, e traduções enUS/ptBR.
+
+Validações em Lua 5.1: sintaxe, seleção real do dropdown, conjunto equipado/parcial, ID zero, renomeação e remoção, API indisponível, isolamento entre personagens, combinação de filtros, cache e eventos de equipamentos, reset, lista lateral e Hover Buff Panel. As regressões anteriores também passaram. Não houve teste dentro do jogo.
+
 ## Outras diferenças
 
 Este documento não é um inventário completo do commit inicial. Antes de atualizar, compare todos os módulos com o ZIP original da versão efetivamente instalada — agora **13.24.2 Forever**. Inspecione também TOCs/XML Camelot, compatibilidade de APIs, grupos de talentos e os demais componentes `*_Camelot`. Não apague uma adaptação só porque ela não aparece na lista acima.
