@@ -6362,7 +6362,6 @@ function cdp.ENTRY.CaptureSpecRefreshIndexState(runtime)
 		"cdmAuraPanelIds",
 		"cdmAuraEntryIdsByPanel",
 		"cdmAuraCooldownKeys",
-		"cdmAuraSpellIds",
 		"cdmAuraHasSpellOnlyEntries",
 		"cdmAuraEntryCount",
 		"barPanels",
@@ -6773,7 +6772,6 @@ function CooldownPanels:RebuildSpellIndex()
 	local cdmAuraPanelIds = {}
 	local cdmAuraEntryIdsByPanel = {}
 	local cdmAuraCooldownKeys = {}
-	local cdmAuraSpellIds = {}
 	local cdmAuraHasSpellOnlyEntries = false
 	local cdmAuraEntryCount = 0
 	local barPanels = {}
@@ -6866,10 +6864,7 @@ function CooldownPanels:RebuildSpellIndex()
 								cdmAuraCooldownKeys[cooldownID] = true
 							end
 							local cdmAuraSpellID = tonumber(entry.spellID)
-							if cdmAuraSpellID and cdmAuraSpellID > 0 then
-								cdmAuraSpellIds[cdmAuraSpellID] = true
-								if not cooldownID then cdmAuraHasSpellOnlyEntries = true end
-							end
+							if cdmAuraSpellID and cdmAuraSpellID > 0 and not cooldownID then cdmAuraHasSpellOnlyEntries = true end
 						end
 					if entry and entry.type == "SPELL" and entry.spellID then
 						spellId = tonumber(entry.spellID)
@@ -6878,9 +6873,6 @@ function CooldownPanels:RebuildSpellIndex()
 								cdmAuraPanels[panelId] = true
 								cdmAuraPanelIds[#cdmAuraPanelIds + 1] = panelId
 								cdmAuraEntryIdsByPanel[panelId] = {}
-							end
-							for _, aliasId in ipairs(self:GetEntrySpellAliasIDs(entry, spellId)) do
-								cdmAuraSpellIds[aliasId] = true
 							end
 							cdmAuraEntryCount = cdmAuraEntryCount + 1
 						end
@@ -7044,7 +7036,6 @@ function CooldownPanels:RebuildSpellIndex()
 	runtime.cdmAuraPanelIds = cdmAuraPanelIds
 	runtime.cdmAuraEntryIdsByPanel = cdmAuraEntryIdsByPanel
 	runtime.cdmAuraCooldownKeys = cdmAuraCooldownKeys
-	runtime.cdmAuraSpellIds = cdmAuraSpellIds
 	runtime.cdmAuraHasSpellOnlyEntries = cdmAuraHasSpellOnlyEntries
 	runtime.cdmAuraEntryCount = cdmAuraEntryCount
 	runtime.barPanels = barPanels
@@ -31815,6 +31806,12 @@ function cdp.ENTRY.RefreshSpellVisualEntries(spellId, mode)
 						end
 					end
 				elseif mode == "icon" then
+					local baseSpellId = data.baseSpellId
+					local effectiveSpellId = baseSpellId and CooldownPanels:ResolveEntryTrackedSpellID(entry, baseSpellId)
+					if effectiveSpellId and effectiveSpellId ~= data.effectiveSpellId then
+						panelNeedsRefresh = true
+						break
+					end
 					data.icon = getEntryIcon(entry) or Helper.PREVIEW_ICON
 					icon.texture:SetTexture(data.icon)
 					Helper.UpdateIconCraftingQuality(icon)
@@ -33835,6 +33832,7 @@ function CooldownPanels:GetManualVisibilityEventFlags()
 	local usesManualVisibility = addon.functions and addon.functions.VisibilityConfigUsesManualEvaluation
 	local targetPanels = {}
 	local castingPanels = {}
+	local formPanels = {}
 	if root and root.panels and enabledPanels and usesManualVisibility then
 		for panelId in pairs(enabledPanels) do
 			local panel = root.panels[panelId]
@@ -33842,12 +33840,18 @@ function CooldownPanels:GetManualVisibilityEventFlags()
 			if visibilityCfg and usesManualVisibility(visibilityCfg, { allowMouseover = false }) then
 				if visibilityCfg.PLAYER_HAS_TARGET or visibilityCfg.PLAYER_HAS_ATTACKABLE_TARGET then targetPanels[panelId] = true end
 				if visibilityCfg.PLAYER_CASTING then castingPanels[panelId] = true end
+				if visibilityCfg.PLAYER_MOUNTED or visibilityCfg.PLAYER_NOT_MOUNTED or visibilityCfg.FLYING_ACTIVE or visibilityCfg.FLYING_INACTIVE
+					or visibilityCfg.FLYING_NOT_ACTIVE or visibilityCfg.SKYRIDING_ACTIVE or visibilityCfg.SKYRIDING_INACTIVE or visibilityCfg.SKYRIDING_NOT_ACTIVE
+				then
+					formPanels[panelId] = true
+				end
 			end
 		end
 	end
 	if runtime then
 		runtime.manualVisibilityTargetPanels = next(targetPanels) and targetPanels or nil
 		runtime.manualVisibilityCastingPanels = next(castingPanels) and castingPanels or nil
+		runtime.manualVisibilityFormPanels = next(formPanels) and formPanels or nil
 	end
 	return next(targetPanels) ~= nil, next(castingPanels) ~= nil
 end
@@ -33855,7 +33859,14 @@ end
 function CooldownPanels:RequestManualVisibilityUpdates(kind)
 	local runtime = self.runtime
 	if not runtime then return false end
-	local panels = kind == "target" and runtime.manualVisibilityTargetPanels or runtime.manualVisibilityCastingPanels
+	local panels
+	if kind == "target" then
+		panels = runtime.manualVisibilityTargetPanels
+	elseif kind == "form" then
+		panels = runtime.manualVisibilityFormPanels
+	else
+		panels = runtime.manualVisibilityCastingPanels
+	end
 	if not (panels and next(panels)) then return false end
 	runtime.manualVisibilityUpdateQueue = runtime.manualVisibilityUpdateQueue or {}
 	for panelId in pairs(panels) do
@@ -33972,6 +33983,11 @@ function CooldownPanels.EnsureUpdateFrame()
 		end
 		if not CooldownPanels.assistedHighlightHooked and ensureAssistedHighlightHook then ensureAssistedHighlightHook() end
 		if CooldownPanels.ensureAssistedHighlightCVarListener then CooldownPanels.ensureAssistedHighlightCVarListener() end
+		if event == "UPDATE_SHAPESHIFT_FORM" then
+			CooldownPanels:RequestFormDependentRefreshes()
+			CooldownPanels:RequestManualVisibilityUpdates("form")
+			return
+		end
 		if event == "PLAYER_TARGET_CHANGED" or event == "UNIT_FACTION" then
 			CooldownPanels:RequestManualVisibilityUpdates("target")
 			return

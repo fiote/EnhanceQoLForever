@@ -379,6 +379,10 @@ local function roundNearestInt(value)
 	return ceil(value - 0.5)
 end
 
+function H.NormalizePortraitFrameLevelOffset(value)
+	return roundNearestInt(H.ClampNumber(value, -20, 1000, 1))
+end
+
 local function isSecretValue(value)
 	local issecretvalue = _G.issecretvalue
 	return issecretvalue and issecretvalue(value) or false

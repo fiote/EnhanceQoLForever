@@ -755,7 +755,7 @@ local function addUniqueThreshold(thresholds, threshold)
 	thresholds[#thresholds + 1] = threshold
 end
 
-local function createNumericBreakpoint(threshold, decimalThreshold, rounding, color)
+local function createNumericBreakpoint(threshold, decimalThreshold, rounding, color, showHourMinutes)
 	if decimalThreshold and decimalThreshold > 0 and threshold < decimalThreshold then
 		return {
 			threshold = threshold,
@@ -792,6 +792,19 @@ local function createNumericBreakpoint(threshold, decimalThreshold, rounding, co
 	elseif threshold >= 3600 then
 		divisor = 3600
 		format = _G.HOUR_ONELETTER_ABBR or "%dh"
+		if showHourMinutes then
+			local minutesFormat = _G.MINUTE_ONELETTER_ABBR or "%dm"
+			return {
+				threshold = threshold,
+				step = 1,
+				rounding = rounding.down,
+				format = formatWithColor(format:gsub("%s+", "") .. minutesFormat:gsub("%s+", ""), color),
+				components = {
+					{ div = divisor, step = 1, rounding = rounding.down },
+					{ div = 60, mod = 60, step = 1, rounding = rounding.down },
+				},
+			}
+		end
 	else
 		divisor = 60
 		format = _G.MINUTE_ONELETTER_ABBR or "%dm"
@@ -827,7 +840,7 @@ function DurationText:CreateSecondsFormatter(config)
 	return formatter
 end
 
-function DurationText:CreateBindingFormatter(config)
+function DurationText:CreateBindingFormatter(config, showHourMinutes)
 	config = config or self:GetGlobalConfig()
 	local colorBands = collectColorBands(config)
 	local api = getNumericRuleFormatterAPI()
@@ -858,7 +871,7 @@ function DurationText:CreateBindingFormatter(config)
 	local breakpoints = {}
 	for i = 1, #thresholds do
 		local threshold = thresholds[i]
-		breakpoints[#breakpoints + 1] = createNumericBreakpoint(threshold, decimalThreshold, rounding, getColorForThreshold(threshold, colorBands))
+		breakpoints[#breakpoints + 1] = createNumericBreakpoint(threshold, decimalThreshold, rounding, getColorForThreshold(threshold, colorBands), showHourMinutes)
 	end
 	if formatter.SetBreakpoints then
 		formatter:SetBreakpoints(breakpoints)
@@ -878,12 +891,12 @@ function DurationText:GetSecondsFormatter(config)
 	return self.formatterCache[cacheKey]
 end
 
-function DurationText:GetBindingFormatter(config)
+function DurationText:GetBindingFormatter(config, showHourMinutes)
 	config = config or self:GetGlobalConfig()
-	local cacheKey = "binding|" .. self:GetCacheKey(config)
+	local cacheKey = (showHourMinutes and "bindingHourMinutes|" or "binding|") .. self:GetCacheKey(config)
 	self.formatterCache = self.formatterCache or {}
 	if not self.formatterCache[cacheKey] then
-		self.formatterCache[cacheKey] = self:CreateBindingFormatter(config)
+		self.formatterCache[cacheKey] = self:CreateBindingFormatter(config, showHourMinutes)
 	end
 	return self.formatterCache[cacheKey]
 end
@@ -1041,7 +1054,8 @@ function DurationText:ApplyToCooldownFrame(cooldownFrame, config, options)
 	config = self:GetEffectiveConfig(config)
 	if cooldownFrame.SetCountdownFormatter then
 		local colorBands = collectColorBands(config)
-		cooldownFrame:SetCountdownFormatter(colorBands and self:GetBindingFormatter(config) or nil)
+		local showHourMinutes = options.showHourMinutes and getNumericRuleFormatterAPI() ~= nil
+		cooldownFrame:SetCountdownFormatter((colorBands or showHourMinutes) and self:GetBindingFormatter(config, showHourMinutes) or nil)
 	end
 	local millisecondsThreshold = tonumber(config.millisecondsThreshold) or 0
 	if cooldownFrame.SetCountdownMillisecondsThreshold then cooldownFrame:SetCountdownMillisecondsThreshold(millisecondsThreshold) end
@@ -1092,7 +1106,7 @@ function DurationText:GetAuraButtonDurationTextOptions(profileKey, options)
 	end
 	if not result.textFormat then
 		local formatter = options.textFormatter or options.formatter
-		if formatter == nil and options.binding == nil then formatter = self:GetBindingFormatter(config) end
+		if formatter == nil and options.binding == nil then formatter = self:GetBindingFormatter(config, options.showHourMinutes) end
 		if formatter then result.textFormatter = formatter end
 	end
 

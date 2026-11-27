@@ -19,6 +19,7 @@ local BORDER_LABEL = EMBLEM_BORDER
 local TEXT_LABEL = LOCALE_TEXT_LABEL
 
 local EDITMODE_ID = "xpBar"
+local XP_DATA_RETRY_LIMIT = 32
 local DYNAMIC_ANCHOR_ID = "bar:experience"
 local ANCHOR_TARGET_UI = "UIParent"
 local ANCHOR_TARGET_PLAYER_CASTBAR = "PLAYER_CASTBAR"
@@ -583,19 +584,31 @@ local function normalizeXPValue(value)
 end
 
 local function getPlayerLevel()
-	local level = UnitLevel and UnitLevel("player") or 0
+	local level = UnitLevel and UnitLevel("player")
 	if issecretvalue and issecretvalue(level) then return 0 end
 	return math.max(0, tonumber(level) or 0)
 end
 
 local function getXPValues()
-	local current = UnitXP and UnitXP("player") or 0
-	local maximum = UnitXPMax and UnitXPMax("player") or 0
-	if issecretvalue and (issecretvalue(current) or issecretvalue(maximum)) then return 0, 0 end
-	return normalizeXPValue(current), normalizeXPValue(maximum)
+	local current = UnitXP and UnitXP("player")
+	if (issecretvalue and issecretvalue(current)) or type(current) ~= "number" or current < 0 then return end
+	local maximum = UnitXPMax and UnitXPMax("player")
+	if (issecretvalue and issecretvalue(maximum)) or type(maximum) ~= "number" or maximum <= 0 then return end
+	return current, maximum
 end
 
 local function getCurrentExpansionMaxLevel()
+	if GameRulesUtil and GameRulesUtil.GetEffectiveMaxLevelForPlayer then
+		local level = GameRulesUtil.GetEffectiveMaxLevelForPlayer()
+		if type(level) == "number" and level > 0 then return level end
+	end
+
+	local gmpl = _G and _G.GetMaxPlayerLevel
+	if gmpl then
+		local maxLevel = tonumber(gmpl())
+		if maxLevel and maxLevel > 0 then return maxLevel end
+	end
+
 	local gmlfe = _G and _G.GetMaxLevelForExpansionLevel
 	if gmlfe then
 		local expansionLevel
@@ -624,19 +637,17 @@ local function getCurrentExpansionMaxLevel()
 		if maxLevel and maxLevel > 0 then return maxLevel end
 	end
 
-	local gmpl = _G and _G.GetMaxPlayerLevel
-	if gmpl then
-		local maxLevel = tonumber(gmpl())
-		if maxLevel and maxLevel > 0 then return maxLevel end
-	end
-
 	return nil
 end
 
-local function isAtCurrentExpansionMaxLevel()
-	local expansionMax = getCurrentExpansionMaxLevel()
-	if not expansionMax then return false end
-	return getPlayerLevel() >= expansionMax
+local function canShowPlayerXP(level, pendingLevel)
+	local canShow = level > 0 and GameRulesUtil and GameRulesUtil.CanShowExperienceBar
+	if pendingLevel or not canShow then
+		local maxLevel = getCurrentExpansionMaxLevel()
+		if maxLevel and (pendingLevel or level) >= maxLevel then return false end
+	end
+	if canShow then return canShow() end
+	return not (IsXPUserDisabled and IsXPUserDisabled())
 end
 
 local function getRestedXP()
@@ -764,6 +775,7 @@ end
 function ExperienceBar:UpdatePreviewSample()
 	if not self.frame then return end
 	local sample = self:BuildPreviewContext()
+	sample.isPreview = true
 	local maxXP = sample.max or 0
 	if maxXP <= 0 then maxXP = 1 end
 	local currentXP = sample.current or 0
@@ -1485,12 +1497,11 @@ function ExperienceBar:EnsureEventFrame()
 	return frame
 end
 
-function ExperienceBar:DespawnFrame()
+function ExperienceBar:HideAndClearProgress()
 	if not self.frame then return end
 	self.frame:Hide()
 	if self.frame.editBg then self.frame.editBg:Hide() end
 	if self.frame.editLabel then self.frame.editLabel:Hide() end
-	if self.frame.GetParent and self.frame:GetParent() ~= nil then self.frame:SetParent(nil) end
 	self._lastXPContext = nil
 	self._hasRested = nil
 	self._lastFraction = nil
@@ -1506,22 +1517,16 @@ function ExperienceBar:StopBootstrapRefresh()
 end
 
 function ExperienceBar:StartBootstrapRefresh()
-	if not self:IsEnabled() then return end
-	if not (C_Timer and C_Timer.NewTicker) then
-		self:UpdateXP()
-		return
-	end
-	if self._bootstrapTicker then return end
+	if self._bootstrapTicker or not self:IsEnabled() or not (C_Timer and C_Timer.NewTicker) then return end
 	self._bootstrapTries = 0
 	self._bootstrapTicker = C_Timer.NewTicker(0.25, function()
-		if not (ExperienceBar and ExperienceBar.IsEnabled and ExperienceBar:IsEnabled()) then
-			if ExperienceBar and ExperienceBar.StopBootstrapRefresh then ExperienceBar:StopBootstrapRefresh() end
+		if not self:IsEnabled() then
+			self:StopBootstrapRefresh()
 			return
 		end
-		ExperienceBar._bootstrapTries = (ExperienceBar._bootstrapTries or 0) + 1
-		ExperienceBar:UpdateXP()
-		local _, maxXP = getXPValues()
-		if maxXP > 0 or (ExperienceBar._bootstrapTries or 0) >= 32 then ExperienceBar:StopBootstrapRefresh() end
+		self._bootstrapTries = self._bootstrapTries + 1
+		self:UpdateXP()
+		if (self._bootstrapTries or 0) >= XP_DATA_RETRY_LIMIT then self:StopBootstrapRefresh() end
 	end)
 end
 
@@ -1606,28 +1611,30 @@ function ExperienceBar:UpdateXP()
 	end
 
 	self:MaybeUpdateAnchor()
-	if isAtCurrentExpansionMaxLevel() then
+	local level = getPlayerLevel()
+	local pendingLevel = self._pendingXPLevel
+	if pendingLevel and level >= pendingLevel then
+		self._pendingXPLevel = nil
+		pendingLevel = nil
+	end
+	if not canShowPlayerXP(level, pendingLevel) then
 		self:StopBootstrapRefresh()
-		local frame = self:EnsureFrame()
-		if frame then
-			frame:Hide()
-			if frame.editBg then frame.editBg:Hide() end
-			if frame.editLabel then frame.editLabel:Hide() end
-		end
+		self:HideAndClearProgress()
 		self:ApplyVisibilityPreference(false)
-		self._lastXPContext = nil
-		self._hasRested = nil
-		self._lastFraction = nil
-		self._xpStats = nil
 		self:ApplyBlizzardTrackingVisibility()
 		return
 	end
-	local currentXP, maxXP = getXPValues()
-	if maxXP <= 0 then
-		self:DespawnFrame()
-		self:ApplyVisibilityPreference(false)
-		self:ApplyBlizzardTrackingVisibility()
-		if not self.frame then self:StartBootstrapRefresh() end
+	local currentXP, maxXP
+	if not pendingLevel and level > 0 then currentXP, maxXP = getXPValues() end
+	if not maxXP then
+		-- The data update can wait. Only a live sample may remain on screen.
+		if self._lastXPContext and self._lastXPContext.isPreview then self:HideAndClearProgress() end
+		if not self._lastXPContext and self.frame and self.frame._rbDesiredVisible ~= false then
+			self.frame:Hide()
+			self:ApplyVisibilityPreference(false)
+			self:ApplyBlizzardTrackingVisibility()
+		end
+		self:StartBootstrapRefresh()
 		return
 	end
 
@@ -1636,7 +1643,7 @@ function ExperienceBar:UpdateXP()
 	if not frame then return end
 
 	local restedXP = getRestedXP()
-	local ctx = buildXPContext(getPlayerLevel(), currentXP, maxXP, restedXP)
+	local ctx = buildXPContext(level, currentXP, maxXP, restedXP)
 	self:EnrichXPContext(ctx)
 	self._lastXPContext = ctx
 	self._hasRested = (ctx.rested or 0) > 0
@@ -1664,9 +1671,17 @@ function ExperienceBar:UpdateXP()
 	self:ApplyBlizzardTrackingVisibility()
 end
 
+function ExperienceBar:RefreshQuestXP()
+	local ctx = self._lastXPContext
+	if self.previewing or not ctx or ctx.isPreview then return end
+	ctx.questXP = self:GetQuestXP()
+	self:UpdateQuestOverlay(ctx)
+	self:UpdateRestedOverlay(ctx)
+	self:UpdateTextFromContext(ctx)
+end
+
 function ExperienceBar:UpdateSoon()
 	if not self:IsEnabled() then return end
-	self:StartBootstrapRefresh()
 	RunNextFrame(function()
 		if ExperienceBar and ExperienceBar.IsEnabled and ExperienceBar:IsEnabled() then ExperienceBar:UpdateXP() end
 	end)
@@ -1707,6 +1722,8 @@ function ExperienceBar:RegisterEvents()
 	frame:RegisterEvent("PLAYER_ALIVE")
 	frame:RegisterEvent("PLAYER_XP_UPDATE")
 	frame:RegisterEvent("PLAYER_LEVEL_UP")
+	frame:RegisterUnitEvent("UNIT_LEVEL", "player")
+	frame:RegisterEvent("PLAYER_MAX_LEVEL_UPDATE")
 	frame:RegisterEvent("UPDATE_EXHAUSTION")
 	frame:RegisterEvent("PLAYER_UPDATE_RESTING")
 	frame:RegisterEvent("ENABLE_XP_GAIN")
@@ -1720,16 +1737,27 @@ function ExperienceBar:RegisterEvents()
 				ExperienceBar._questRefreshQueued = true
 				RunNextFrame(function()
 					ExperienceBar._questRefreshQueued = nil
-					if ExperienceBar:IsEnabled() then ExperienceBar:UpdateXP() end
+					if ExperienceBar:IsEnabled() then ExperienceBar:RefreshQuestXP() end
 				end)
 			end
 			return
 		end
-		if event == "PLAYER_LEVEL_UP" or event == "PLAYER_ENTERING_WORLD" then ExperienceBar._questXP = nil end
-		if event == "PLAYER_XP_UPDATE" then
+		if event == "PLAYER_XP_UPDATE" or event == "UNIT_LEVEL" or event == "PLAYER_MAX_LEVEL_UPDATE" then
 			local unit = ...
 			if unit and unit ~= "player" then return end
-		elseif event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_ALIVE" then
+		elseif event == "PLAYER_LEVEL_UP" or event == "PLAYER_ENTERING_WORLD" or event == "ENABLE_XP_GAIN" or event == "DISABLE_XP_GAIN" then
+			ExperienceBar:StopBootstrapRefresh()
+			if event == "PLAYER_LEVEL_UP" then
+				local newLevel = ...
+				-- The event can announce the next level before UnitLevel reflects it.
+				if not (issecretvalue and issecretvalue(newLevel)) and type(newLevel) == "number" and newLevel > 0 then ExperienceBar._pendingXPLevel = newLevel end
+				ExperienceBar._questXP = nil
+			elseif event == "PLAYER_ENTERING_WORLD" then
+				ExperienceBar._questXP = nil
+				ExperienceBar._pendingXPLevel = nil
+				ExperienceBar:UpdateSoon()
+			end
+		elseif event == "PLAYER_LOGIN" or event == "PLAYER_ALIVE" then
 			ExperienceBar:UpdateSoon()
 		end
 		ExperienceBar:UpdateXP()
@@ -1747,6 +1775,8 @@ function ExperienceBar:UnregisterEvents()
 	self.eventFrame:UnregisterEvent("PLAYER_ALIVE")
 	self.eventFrame:UnregisterEvent("PLAYER_XP_UPDATE")
 	self.eventFrame:UnregisterEvent("PLAYER_LEVEL_UP")
+	self.eventFrame:UnregisterEvent("UNIT_LEVEL")
+	self.eventFrame:UnregisterEvent("PLAYER_MAX_LEVEL_UPDATE")
 	self.eventFrame:UnregisterEvent("UPDATE_EXHAUSTION")
 	self.eventFrame:UnregisterEvent("PLAYER_UPDATE_RESTING")
 	self.eventFrame:UnregisterEvent("ENABLE_XP_GAIN")
@@ -3112,6 +3142,7 @@ function ExperienceBar:OnSettingChanged(enabled)
 	else
 		self:UnregisterEvents()
 		self:StopBootstrapRefresh()
+		self._pendingXPLevel = nil
 		self:ApplyVisibilityPreference(false)
 		if self.frame then self.frame:Hide() end
 		if self._anchorRefreshTicker then

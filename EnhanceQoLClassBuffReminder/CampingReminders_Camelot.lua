@@ -19,6 +19,20 @@ local M = {
 }
 Reminder.foreverCamping = M
 
+-- Well Fed drinks confirmed by the 1.60.1.71139 item and spell tables.
+local wellFedCatalogItems = {
+	[10841] = true,
+	[249865] = true, [249866] = true, [249867] = true, [249868] = true, [249869] = true, [249870] = true,
+	[249871] = true, [249872] = true, [249873] = true, [249874] = true, [249875] = true, [249876] = true,
+}
+
+-- These items are available through the reminder's item click.
+local additionalWellFedItems = {
+	{ id = 17198, requiredLevel = 1 }, -- Egg Nog also causes intoxication.
+	{ id = 287973, requiredLevel = 1 },
+	{ id = 287974, requiredLevel = 1 },
+}
+
 local function plain(value)
 	if issecretvalue and issecretvalue(value) then return nil end
 	return value
@@ -65,26 +79,34 @@ function M.Entry(id, kind, label)
 	return entry
 end
 
--- Reuse the reviewed consumable catalog; ordinary recovery food is not buff food.
+local function addCarriedFood(candidates, item, level)
+	if type(level) ~= "number" or level < (item.requiredLevel or 0) then return end
+	local count = C_Item and C_Item.GetItemCount and plain(C_Item.GetItemCount(item.id, false, false))
+	if type(count) == "number" and count > 0 then candidates[#candidates + 1] = item end
+end
+
 function M.GetFoodCandidates()
 	local level = plain(UnitLevel("player"))
 	if M.foodCandidates and M.foodLevel == level then return M.foodCandidates end
 	local candidates = {}
-	M.foodItemIds = M.foodItemIds or {}
+	local foodItemIds = {}
 	for _, item in ipairs(addon.ForeverConsumables and addon.ForeverConsumables.items or {}) do
-		if item.hasBuff and (item.category == "food" or item.category == "food_and_drink") then
-			M.foodItemIds[item.id] = true
-			local count = C_Item and C_Item.GetItemCount and plain(C_Item.GetItemCount(item.id, false, false))
-			if type(level) == "number" and level >= (item.requiredLevel or 0) and type(count) == "number" and count > 0 then
-				candidates[#candidates + 1] = item
-			end
+		if wellFedCatalogItems[item.id] or (item.hasBuff and (item.category == "food" or item.category == "food_and_drink")) then
+			foodItemIds[item.id] = true
+			addCarriedFood(candidates, item, level)
+		end
+	end
+	for _, item in ipairs(additionalWellFedItems) do
+		if not foodItemIds[item.id] then
+			foodItemIds[item.id] = true
+			addCarriedFood(candidates, item, level)
 		end
 	end
 	table.sort(candidates, function(a, b)
 		if a.requiredLevel ~= b.requiredLevel then return (a.requiredLevel or 0) > (b.requiredLevel or 0) end
 		return a.id < b.id
 	end)
-	M.foodCandidates, M.foodLevel = candidates, level
+	M.foodItemIds, M.foodCandidates, M.foodLevel = foodItemIds, candidates, level
 	return candidates
 end
 

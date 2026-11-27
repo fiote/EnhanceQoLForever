@@ -291,7 +291,7 @@ local function setTrackedState(stanceID, active)
 	local normalized = active == true
 	if tracker.states[stanceID] == normalized then return end
 	tracker.states[stanceID] = normalized
-	if CooldownPanels and CooldownPanels.RequestUpdate then CooldownPanels:RequestUpdate("Stance:" .. stanceID) end
+	if CooldownPanels.RequestFormDependentRefreshes then CooldownPanels:RequestFormDependentRefreshes(stanceID) end
 end
 
 local function ensureStateDriver(def)

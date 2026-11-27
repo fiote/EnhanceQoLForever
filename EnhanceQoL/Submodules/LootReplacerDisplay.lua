@@ -19,7 +19,7 @@ local defaults = {
 	borderColor = { r = 0.94, g = 0.92, b = 0.88, a = 0.8 },
 	animate = true, fadeIn = 140, fadeOut = 100,
 	received = true, receivedMaxRows = 3, receivedDuration = 3.5, receivedRise = 12,
-	receivedItems = true, receivedMoney = true, receivedCurrencies = true, receivedReputation = true, receivedQuestXP = true,
+	receivedItems = true, receivedMinItemQuality = 0, receivedMoney = true, receivedCurrencies = true, receivedReputation = true, receivedQuestXP = true,
 	receivedSkillUps = false,
 	buttonSize = 22, timer = true,
 	timerHeight = 1, timerText = false, timerFont = "", timerOutline = addon.functions.GetGlobalFontStyleConfigKey(),
@@ -52,7 +52,7 @@ function Loot:ApplyDisplayLayout()
 	local kept = 0
 	if config.received then
 		for _, receipt in ipairs(self.receipts) do
-			if config[receipt.category] then
+			if config[receipt.category] and (receipt.category ~= "receivedItems" or self:MeetsReceiptItemQuality(receipt.quality)) then
 				kept = kept + 1
 				self.receipts[kept] = receipt
 			end
@@ -499,7 +499,9 @@ local function previewReceipts(cfg)
 	local examples, rows = {}, {}
 	if not cfg.received then return rows end
 	for _, sample in ipairs(sampleReceived) do
-		if cfg[sample.category] then examples[#examples + 1] = sample end
+		if cfg[sample.category] and (sample.category ~= "receivedItems" or Loot:MeetsReceiptItemQuality(sample.quality)) then
+			examples[#examples + 1] = sample
+		end
 	end
 	if #examples == 0 then return rows end
 	for index = 1, cfg.receivedMaxRows do
@@ -897,6 +899,21 @@ local function buildSettings()
 		return config.received and config.animate and config.fadeIn > 0
 	end)
 	field("animation", "receivedItems", _G.ITEMS, kind.Checkbox, { isEnabled = receivedEnabled })
+	dropdown("animation", "receivedMinItemQuality", L["floatingLootMinimumItemQuality"], function()
+		local values, order = {}, {}
+		for quality = 0, 8 do
+			local label = _G["ITEM_QUALITY" .. quality .. "_DESC"]
+			if label then
+				local qualityColor = ITEM_QUALITY_COLORS[quality]
+				values[quality] = qualityColor and qualityColor.color and qualityColor.color:WrapTextInColorCode(label) or label
+				order[#order + 1] = quality
+			end
+		end
+		return values, order
+	end, function()
+		local config = layoutConfig()
+		return config.received and config.receivedItems
+	end).navigationField = "receivedMinItemQuality"
 	field("animation", "receivedMoney", _G.MONEY, kind.Checkbox, { isEnabled = receivedEnabled })
 	field("animation", "receivedCurrencies", _G.CURRENCY, kind.Checkbox, { isEnabled = receivedEnabled })
 	field("animation", "receivedReputation", _G.REPUTATION, kind.Checkbox, { isEnabled = receivedEnabled })

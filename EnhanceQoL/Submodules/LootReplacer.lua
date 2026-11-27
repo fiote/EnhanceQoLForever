@@ -73,6 +73,11 @@ function Loot:CanReceive(category)
 	return self.enabled and self.config and self.config.received and self.config[category]
 end
 
+function Loot:MeetsReceiptItemQuality(quality)
+	local minimum = self.config.receivedMinItemQuality
+	return minimum == 0 or (quality ~= nil and quality >= minimum)
+end
+
 function Loot:AddReceipt(receipt, category)
 	self.nextReceipt = self.nextReceipt + 1
 	receipt.key, receipt.received, receipt.category = self.nextReceipt, true, category
@@ -104,6 +109,7 @@ function Loot:ReceiveItem(link, count, source)
 
 	local _, _, quality, _, _, _, _, _, _, icon = C_Item.GetItemInfo(item)
 	if hasSecretValues(quality) then quality = nil end
+	if not self:MeetsReceiptItemQuality(quality) then return end
 	if hasSecretValues(icon) or not icon then
 		icon = select(5, C_Item.GetItemInfoInstant(item))
 		if hasSecretValues(icon) then icon = nil end

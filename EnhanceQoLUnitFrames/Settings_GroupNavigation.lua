@@ -6,6 +6,26 @@ local L = LibStub("AceLocale-3.0"):GetLocale("EnhanceQoL")
 local Navigation = {}
 addon.Aura.GroupFrameNavigation = Navigation
 
+function Navigation.AppendPartyFrameStrataSetting(settings, editModeId, getCfg)
+	local frames = addon.Aura.UF.GroupFrames
+	settings[#settings + 1] = {
+		name = L["Frame strata"] or "Frame strata",
+		kind = addon.EditModeLib.SettingType.Dropdown,
+		field = "frameStrata",
+		parentId = "frame",
+		default = "",
+		values = frames._FRAME_STRATA_OPTIONS_WITH_DEFAULT,
+		get = function() return frames.NormalizeFrameStrataToken(getCfg("party").frameStrata) or "" end,
+		set = function(_, value)
+			local cfg = getCfg("party")
+			if not cfg then return end
+			cfg.frameStrata = frames.NormalizeFrameStrataToken(value)
+			if addon.EditMode and addon.EditMode.SetValue then addon.EditMode:SetValue(editModeId, "frameStrata", cfg.frameStrata or "", nil, true) end
+			frames:ApplyHeaderAttributes("party")
+		end,
+	}
+end
+
 local function isBarTextField(field, prefix)
 	if type(field) ~= "string" or field:sub(1, #prefix) ~= prefix then return false end
 	local suffix = field:sub(#prefix + 1)
@@ -682,7 +702,8 @@ function Navigation.Prepare(settings, kind, factoryValues, factoryConfig)
 		end
 		if field == "dynamicAnchorProfile" or ((kind == "party" or kind == "raid") and data.parentId == "frame" and (field == "anchorTarget" or field == "point" or field == "relativePoint" or field == "x" or field == "y")) then
 			hint(data, "dynamicAnchorEnabled", "frame")
-		elseif kind == "party" and field:match("^portraitDetached") and field ~= "portraitDetached" and field ~= "portraitDetachedBorderOffset" then
+		elseif kind == "party" and field:match("^portraitDetached") and field ~= "portraitDetached" and field ~= "portraitDetachedBorderOffset"
+			and field ~= "portraitDetachedStrata" and field ~= "portraitDetachedFrameLevelOffset" then
 			hint(data, "portraitDetached", "portraitPosition")
 		elseif kind == "party" and field:match("^powerDetached") and field ~= "powerDetached" then
 			hint(data, "powerDetached", "power")

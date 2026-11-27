@@ -2,7 +2,7 @@
 ## X-EQOL-Flavor: forever
 ## Title: Enhance QoL Vendor
 ## Author: R41Z0R
-## Version: 13.24.2
+## Version: 13.24.4
 ## Notes: Vendor automation and shopping helpers
 ## Notes-deDE: Haendler-Automatisierung und Einkaufshelfer
 ## Notes-esES: Automatizacion de vendedores y ayudas de compra

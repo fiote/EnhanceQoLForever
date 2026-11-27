@@ -114,6 +114,7 @@ local navigationFallback
 if addon.functions.CreateNavigationWaypointFallback and M.Read("showInGameNavigation") == nil then
 	navigationFallback = addon.functions.CreateNavigationWaypointFallback()
 end
+function addon.functions.IsNavigationWaypointAvailable() return navigationFallback ~= nil or M.Read("showInGameNavigation") ~= nil end
 M.Toggle("showInGameNavigation", "showInGameNavigation", "1", "0", navigationFallback)
 if navigationFallback then
 	addon.functions.SettingsCreateSlider(category, {
@@ -132,6 +133,22 @@ if navigationFallback then
 		indent = 16,
 		parentCheck = navigationFallback.get,
 		parentSection = section,
+	})
+	addon.functions.SettingsCreateDropdown(category, {
+		id = "navigationWaypointStrata",
+		var = "navigationWaypointStrata",
+		key = false,
+		storage = false,
+		text = L["navigationWaypointStrata"],
+		list = navigationFallback.strataOptions,
+		order = navigationFallback.strataOrder,
+		get = navigationFallback.getStrata,
+		func = navigationFallback.setStrata,
+		default = navigationFallback.defaultStrata,
+		indent = 16,
+		parentCheck = navigationFallback.get,
+		parentSection = section,
+		newTagID = "navigationWaypointStrata",
 	})
 end
 M.Toggle("autoAddNewSpells", "AutoPushSpellToActionBar", "1", "0")

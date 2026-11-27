@@ -1069,6 +1069,17 @@ local trackerData = {
 		},
 	},
 	{
+		var = "questTrackerQuickToggles",
+		text = L["questTrackerQuickToggles"],
+		desc = L["questTrackerQuickToggles_desc"],
+		newTagID = "questTrackerQuickToggles",
+		default = false,
+		func = function(value)
+			addon.db.questTrackerQuickToggles = value == true
+			addon.Skinner.functions.RefreshObjectiveTrackerQuickToggles()
+		end,
+	},
+	{
 		var = "questTrackerHideMainHeader",
 		text = L["questTrackerHideMainHeader"],
 		desc = L["questTrackerHideMainHeader_desc"],
@@ -1140,6 +1151,7 @@ local trackerData = {
 
 function addon.Skinner.functions.InitObjectiveTrackerDB()
 	if not addon.functions or not addon.functions.InitDBValue then return end
+	addon.functions.InitDBValue("questTrackerQuickToggles", false)
 	addon.functions.InitDBValue("questTrackerShowQuestCount", false)
 	addon.functions.InitDBValue("questTrackerQuestCountOffsetX", 0)
 	addon.functions.InitDBValue("questTrackerQuestCountOffsetY", 0)
@@ -1149,6 +1161,7 @@ function addon.Skinner.functions.InitObjectiveTrackerDB()
 	EnsureObjectiveTrackerMinimizeWatcher()
 	EnsureObjectiveTrackerMinimizeHook()
 	ActivateQuestTrackerMainHeaderHidden()
+	addon.Skinner.functions.RefreshObjectiveTrackerQuickToggles()
 	ActivateQuestTrackerTextStyle()
 	EnsureQuestTrackerQuestCountWatcher()
 	UpdateQuestTrackerQuestCount()
@@ -1161,7 +1174,7 @@ function addon.Skinner.functions.InitObjectiveTrackerSettings(category, expandab
 	local headings = {
 		questTrackerShowQuestCount = "questTrackerSectionCount",
 		questTrackerTextStyleEnabled = "questTrackerSectionText",
-		questTrackerHideMainHeader = "questTrackerSectionBehavior",
+		questTrackerQuickToggles = "questTrackerSectionBehavior",
 	}
 	for _, entry in ipairs(trackerData) do
 		local heading = headings[entry.var]

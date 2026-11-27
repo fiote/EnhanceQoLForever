@@ -4430,6 +4430,69 @@ function UF.AddDispelIconPositionSettings(list, unit, dispelDef, refreshSelf, re
 	end
 end
 
+function UF.ui.AppendPvPFlagTimerSettings(list, def, refreshSelf, refreshSettingsUI)
+	if not (def and UFHelper.SupportsPvPFlagTimer()) then return end
+	local function get(key, fallback) return getValue("player", { "pvpIndicator", "timer", key }, fallback) end
+	local function set(key, value)
+		setValue("player", { "pvpIndicator", "timer", key }, value)
+		refreshSelf()
+	end
+	local function indicatorEnabled() return getValue("player", { "pvpIndicator", "enabled" }, false) == true end
+	local function timerEnabled() return get("enabled", def.enabled) == true end
+	local function canEditText() return indicatorEnabled() and timerEnabled() end
+	local function append(row, field)
+		row.navigationField = "pvpFlagTimer." .. field
+		row.isEnabled = canEditText
+		list[#list + 1] = row
+	end
+
+	list[#list + 1] = { name = L["UFPvPFlagTimer"], kind = UF.ui.settingType.Divider, parentId = "unitStatus" }
+	local enabled = checkbox(L["Show"], timerEnabled, function(value)
+		set("enabled", value == true)
+		refreshSettingsUI()
+	end, def.enabled, "unitStatus", indicatorEnabled)
+	enabled.navigationField = "pvpFlagTimer.enabled"
+	list[#list + 1] = enabled
+
+	local globalFont = globalFontConfigKey()
+	append(checkboxDropdown(L["Font"], fontOptions, function() return get("font", globalFont) end,
+		function(value) set("font", value) end, globalFont, "unitStatus"), "font")
+	append(slider(FONT_SIZE_LABEL, 6, 64, 1, function() return get("fontSize", def.fontSize) end,
+		function(value) set("fontSize", UFHelper.ClampNumber(value, 6, 64, def.fontSize)) end, def.fontSize, "unitStatus", true), "fontSize")
+	local globalOutline = def.fontOutline
+	append(checkboxDropdown(L["Font outline"], UF.ui.outlineOptions, function()
+		return normalizeFontStyleChoice(get("fontOutline", globalOutline), globalOutline)
+	end, function(value) set("fontOutline", normalizeFontStyleChoice(value, globalOutline)) end, globalOutline, "unitStatus"), "fontOutline")
+	append(radioDropdown(L["Anchor"], UF.ui.anchorOptions9, function() return get("anchor", def.anchor) end,
+		function(value) set("anchor", value or def.anchor) end, def.anchor, "unitStatus"), "anchor")
+	local offsetRange = UF.ui.offsetRange
+	for _, option in ipairs({ { "offsetX", L["Offset X"] }, { "offsetY", L["Offset Y"] } }) do
+		local field, label = option[1], option[2]
+		append(slider(label, -offsetRange, offsetRange, 1, function() return get(field, def[field]) end,
+			function(value) set(field, UFHelper.ClampNumber(value, -offsetRange, offsetRange, def[field])) end,
+			def[field], "unitStatus", true), field)
+	end
+
+	local function usesClassColor() return get("useClassColor", def.useClassColor) == true end
+	append(checkbox(L["Use class color"], usesClassColor, function(value)
+		set("useClassColor", value == true)
+		refreshSettingsUI()
+	end, def.useClassColor, "unitStatus"), "useClassColor")
+	local function getColor() return get("color", def.color) end
+	local function updateColor(_, color) set("color", { color.r, color.g, color.b }) end
+	append({
+		name = L["Text color"],
+		kind = UF.ui.settingType.Color,
+		parentId = "unitStatus",
+		get = getColor,
+		set = updateColor,
+		colorGet = getColor,
+		colorSet = updateColor,
+		colorDefault = { r = def.color[1], g = def.color[2], b = def.color[3] },
+	}, "color")
+	list[#list].isEnabled = function() return canEditText() and not usesClassColor() end
+end
+
 local function buildUnitSettings(unit)
 	local MIN_WIDTH = UF.ui.minWidth
 	local OFFSET_RANGE = UF.ui.offsetRange
@@ -6529,6 +6592,26 @@ local function buildUnitSettings(unit)
 		end
 		powerTypeSetting.isEnabled = isPowerEnabled
 		list[#list + 1] = powerTypeSetting
+		if addon.ManaCostPreview then
+			local function readPreview() return getValue(unit, { "power", "manaCostPreview" }) end
+			addon.ManaCostPreview.AddSettings(list, settingType, {
+				prefix = "manaCostPreview", parentId = "power", read = readPreview,
+				write = function()
+					local cfg = readPreview()
+					if type(cfg) ~= "table" then cfg = {} end
+					setValue(unit, { "power", "manaCostPreview" }, cfg)
+					return cfg
+				end,
+				enabled = function()
+					if isPowerEnabled() and isPrimaryAllowedTypeSelected("MANA") then return true end
+					local cfg = getValue(unit, { "secondaryPower" }) or {}
+					local defaults = def.secondaryPower or {}
+					return cfg.enabled ~= false and UFHelper.ResolveSecondaryPowerToken and UFHelper.ResolveSecondaryPowerToken(cfg, defaults,
+						addon.variables.unitClass, addon.variables.unitSpec) == "MANA"
+				end,
+				refresh = refreshSelf, refreshSettings = refreshSettingsUI,
+			})
+		end
 		if addon.ManaRegen then
 			local manaRegenSpark = checkbox(L["ManaFiveSecondRule"], function() return getValue(unit, { "power", "manaRegenSpark" }, false) == true end, function(value)
 				setValue(unit, { "power", "manaRegenSpark" }, value and true or false)
@@ -9119,6 +9202,8 @@ local function buildUnitSettings(unit)
 				hasOpacity = true,
 			}
 		end
+
+		if unit == "player" then UF.ui.AppendPvPFlagTimerSettings(list, pvpDef.timer, refreshSelf, refreshSettingsUI) end
 
 		local roleDef = def.roleIndicator or { enabled = false, size = 18, offset = { x = 24, y = -2 } }
 		local function isRoleIndicatorEnabled() return getValue(unit, { "roleIndicator", "enabled" }, roleDef.enabled == true) == true end

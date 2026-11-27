@@ -209,6 +209,64 @@ end
 local function applyResourceBarsVisibility(context)
 	if ResourceBars and ResourceBars.ApplyVisibilityPreference then ResourceBars.ApplyVisibilityPreference(context or "settings") end
 end
+function ResourceBars.AddManaCostPreviewSettings(settings, types, getSlot, getOverride, ensureOverride, selectedMana, refresh)
+	local preview = addon.ManaCostPreview
+	if not preview then return end
+	local function applies()
+		local override = getOverride("MANA")
+		return override and override.enabled == true and override.manaCostPreviewOverride == true
+	end
+	local function write(parent)
+		if not parent then return end
+		if type(parent.manaCostPreview) ~= "table" then parent.manaCostPreview = {} end
+		return parent.manaCostPreview
+	end
+	local function refreshControls()
+		if addon.EditModeLib and addon.EditModeLib.internal then addon.EditModeLib.internal:RefreshSettings() end
+	end
+	preview.AddSettings(settings, types, {
+		prefix = "manaCostPreview", parentId = "frame",
+		read = function() local slot = getSlot(); return slot and slot.manaCostPreview end,
+		write = function() return write(getSlot()) end,
+		enabled = function() return not applies() end,
+		refresh = refresh, refreshSettings = refreshControls,
+	})
+	if not selectedMana then return end
+	local function overrideEnabled()
+		local entry = getOverride("MANA")
+		return entry and entry.enabled == true or false
+	end
+	settings[#settings + 1] = {
+		name = L["manaCostPreviewOverride"], kind = types.Checkbox, field = "powerTypeOverrideManaCostPreview",
+		navigationField = "powerTypeOverrideManaCostPreview", parentId = "powercolorsetting", default = false,
+		get = function() return applies() == true end,
+		set = function(_, value)
+			local entry = ensureOverride("MANA")
+			if not entry then return end
+			if value and type(entry.manaCostPreview) ~= "table" then
+				local slot = getSlot()
+				entry.manaCostPreview = slot and type(slot.manaCostPreview) == "table" and CopyTable(slot.manaCostPreview) or {}
+			end
+			entry.manaCostPreviewOverride = value == true
+			refresh()
+			refreshControls()
+		end,
+		isEnabled = overrideEnabled, isShown = selectedMana,
+	}
+	preview.AddSettings(settings, types, {
+		prefix = "powerTypeOverrideManaCostPreview", parentId = "powercolorsetting", shown = selectedMana,
+		read = function()
+			local entry = getOverride("MANA")
+			if entry and entry.manaCostPreviewOverride == true then return entry.manaCostPreview end
+			local slot = getSlot()
+			return slot and slot.manaCostPreview
+		end,
+		write = function() return write(ensureOverride("MANA")) end,
+		enabled = function() return applies() == true end,
+		refresh = refresh, refreshSettings = refreshControls,
+	})
+end
+
 local function refreshSettingsUI()
 	local lib = addon.EditModeLib
 	if lib and lib.internal and lib.internal.RefreshSettings then lib.internal:RefreshSettings() end
@@ -4241,6 +4299,14 @@ local function buildEditModeBars(preview)
 
 		if ResourceBars.AddFillSparkSettings then
 			ResourceBars.AddFillSparkSettings(settingsList, settingType, currentSlotConfig, queueRefresh, currentLiveBarType, collectSharedPowerTypes())
+		end
+
+		for _, pType in ipairs(collectSharedPowerTypes()) do
+			if pType == "MANA" then
+				ResourceBars.AddManaCostPreviewSettings(settingsList, settingType, currentSlotConfig, getPowerTypeOverrideEntry, ensurePowerTypeOverrideEntry,
+					genericSharedPowerEditor and function() return selectedSharedPowerTypeTarget() == "MANA" end, queueRefresh)
+				break
+			end
 		end
 
 		if ResourceBars.PrepareNavigationSettings then

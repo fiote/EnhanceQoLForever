@@ -3375,11 +3375,111 @@ function H.GetStatusVisualOffsetY(st, anchor)
 	return uf.GetStatusVisualOffsetY(anchor, physicalHeight, st._statusLayoutHeight)
 end
 
+function H.SupportsPvPFlagTimer()
+	return (addon.variables.isForever or addon.variables.isTBC)
+		and _G.IsPVPTimerRunning and _G.GetPVPTimer
+		and C_DurationUtil and C_DurationUtil.CreateDuration and C_DurationUtil.CreateDurationTextBinding
+		and C_StringUtil and C_StringUtil.CreateNumericRuleFormatter
+		and Enum and Enum.NumericRuleFormatRounding
+end
+
+H.pvpFlagTimerAnchors = {
+	TOPLEFT = { "BOTTOMLEFT", 0, 2 }, TOP = { "BOTTOM", 0, 2 }, TOPRIGHT = { "BOTTOMRIGHT", 0, 2 },
+	LEFT = { "RIGHT", -2, 0 }, CENTER = { "CENTER", 0, 0 }, RIGHT = { "LEFT", 2, 0 },
+	BOTTOMLEFT = { "TOPLEFT", 0, -2 }, BOTTOM = { "TOP", 0, -2 }, BOTTOMRIGHT = { "TOPRIGHT", 0, -2 },
+}
+
+function H.applyPvPTextColor(text, unit, cfg, def)
+	local color = cfg.color or def.color or { 1, 1, 1, 1 }
+	local useClassColor = cfg.useClassColor
+	if useClassColor == nil then useClassColor = def.useClassColor end
+	if useClassColor and not H.isUnitIdentitySecret(unit) and UnitClass then
+		local _, class = UnitClass(unit)
+		if not (issecretvalue and issecretvalue(class)) and type(class) == "string" then
+			local custom = addon.db and addon.db.ufUseCustomClassColors and addon.db.ufClassColors and addon.db.ufClassColors[class]
+			color = custom or (_G.CUSTOM_CLASS_COLORS and _G.CUSTOM_CLASS_COLORS[class]) or (_G.RAID_CLASS_COLORS and _G.RAID_CLASS_COLORS[class]) or color
+		end
+	end
+	text:SetTextColor(color[1] or color.r or 1, color[2] or color.g or 1, color[3] or color.b or 1, color[4] or color.a or 1)
+end
+
+function H.updatePvPFlagTimer(st, cfg, def, show, preview)
+	local functions = addon.functions
+	local text = st.pvpFlagTimerText
+	local remaining
+	local enabled = show and cfg.enabled ~= false and H.SupportsPvPFlagTimer()
+	preview = enabled and preview
+	if enabled and not preview and H.UnsecretBool(_G.IsPVPTimerRunning()) then
+		remaining = _G.GetPVPTimer()
+	end
+	if not preview and ((issecretvalue and issecretvalue(remaining)) or type(remaining) ~= "number" or remaining <= 0) then
+		if text then
+			functions.SetDurationTextBindingEnabled(st, "pvpFlagTimer", false)
+			text:Hide()
+		end
+		return
+	end
+
+	if not text then
+		text = st.pvpIcon:GetParent():CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+		text:SetDrawLayer("OVERLAY", 7)
+		st.pvpFlagTimerText = text
+	end
+	local anchor = cfg.anchor or def.anchor
+	local point = H.pvpFlagTimerAnchors[anchor]
+	if not point then
+		anchor = def.anchor
+		point = H.pvpFlagTimerAnchors[anchor]
+	end
+	text:ClearAllPoints()
+	text:SetPoint(point[1], st.pvpIcon, anchor, point[2] + (cfg.offsetX or def.offsetX), point[3] + (cfg.offsetY or def.offsetY))
+	H.applyFont(text, cfg.font, H.ClampNumber(cfg.fontSize, 6, 64, def.fontSize), cfg.fontOutline or def.fontOutline)
+	H.applyPvPTextColor(text, "player", cfg, def)
+	if preview then
+		functions.SetDurationTextBindingEnabled(st, "pvpFlagTimer", false)
+		text:SetText("4:32")
+		text:Show()
+		return
+	end
+
+	if not st.pvpFlagDuration then st.pvpFlagDuration = C_DurationUtil.CreateDuration() end
+	st.pvpFlagDuration:SetTimeFromStart(GetTime(), remaining / 1000)
+	if not H.pvpFlagTimerFormat then
+		local formatter = C_StringUtil.CreateNumericRuleFormatter()
+		local rounding = Enum.NumericRuleFormatRounding
+		formatter:SetBreakpoints({
+			{
+				threshold = 0,
+				step = 1,
+				rounding = rounding.Up,
+				format = "%d:%02d",
+				components = {
+					{ div = 60, step = 1, rounding = rounding.Down },
+					{ mod = 60, step = 1, rounding = rounding.Down },
+				},
+			},
+		})
+		local component = functions.CreateDurationTextBindingFormatComponent("RemainingDuration", formatter)
+		if not component then return end
+		H.pvpFlagTimerFormat = {
+			components = { component },
+			textFormat = "{}",
+			useProfileConfig = false,
+			expiredText = "",
+			zeroDurationText = "",
+		}
+	end
+	local _, bound = functions.ConfigureDurationTextBinding(st, "pvpFlagTimer", text, st.pvpFlagDuration, H.pvpFlagTimerFormat)
+	text:SetShown(bound == true)
+end
+
 function H.updatePvPIndicator(st, unit, cfg, def, skipDisabled, contentScale)
 	if not st or not st.pvpIcon then return end
 	def = def or {}
 	local pcfg = (cfg and cfg.pvpIndicator) or (def and def.pvpIndicator) or {}
 	local enabled = pcfg.enabled == true and not (cfg and cfg.enabled == false)
+	local timerDef = unit == "player" and def.pvpIndicator and def.pvpIndicator.timer
+	if not enabled and st.pvpFlagTimerText then H.updatePvPFlagTimer(st, pcfg.timer, timerDef, false) end
 	if not enabled and skipDisabled then return end
 
 	local offsetDef = def and def.pvpIndicator and def.pvpIndicator.offset or {}
@@ -3404,6 +3504,7 @@ function H.updatePvPIndicator(st, unit, cfg, def, skipDisabled, contentScale)
 	st.pvpHonorText:Hide()
 	local inEditMode = addon.EditModeLib and addon.EditModeLib:IsInEditMode()
 	local atlas = resolvePvPAtlas(unit)
+	local isFreeForAll = atlas == "UI-HUD-UnitFrame-Player-PVP-FFAIcon"
 	if not atlas and inEditMode then
 		local sampleFaction = UnitFactionGroup and UnitFactionGroup("player")
 		if sampleFaction == "Horde" then
@@ -3426,12 +3527,12 @@ function H.updatePvPIndicator(st, unit, cfg, def, skipDisabled, contentScale)
 					st.pvpIcon:SetSize(size * 59 / 69, size)
 				end
 				H.applyPvPHonorText(st, unit, pcfg, def.pvpIndicator or {}, honorLevel, size, honorAtlas and size * 59 / 69 or size, contentScale)
-				return
 			end
 		end
 	else
 		st.pvpIcon:Hide()
 	end
+	if timerDef then H.updatePvPFlagTimer(st, pcfg.timer or timerDef, timerDef, atlas and (inEditMode or not isFreeForAll), inEditMode) end
 end
 
 function H.applyPvPHonorText(st, unit, cfg, def, honorLevel, iconSize, iconWidth, contentScale)
@@ -3463,17 +3564,7 @@ function H.applyPvPHonorText(st, unit, cfg, def, honorLevel, iconSize, iconWidth
 	end
 	H.applyFont(text, font, fontSize, outline)
 	text:SetTextScale(st._pvpHonorTextScale)
-	local color = cfg.color or def.color or { 1, 1, 1, 1 }
-	local useClassColor = cfg.useClassColor
-	if useClassColor == nil then useClassColor = def.useClassColor end
-	if useClassColor and not H.isUnitIdentitySecret(unit) and UnitClass then
-		local _, class = UnitClass(unit)
-		if not (issecretvalue and issecretvalue(class)) and type(class) == "string" then
-			local custom = addon.db and addon.db.ufUseCustomClassColors and addon.db.ufClassColors and addon.db.ufClassColors[class]
-			color = custom or (_G.CUSTOM_CLASS_COLORS and _G.CUSTOM_CLASS_COLORS[class]) or (_G.RAID_CLASS_COLORS and _G.RAID_CLASS_COLORS[class]) or color
-		end
-	end
-	text:SetTextColor(color[1] or color.r or 1, color[2] or color.g or 1, color[3] or color.b or 1, color[4] or color.a or 1)
+	H.applyPvPTextColor(text, unit, cfg, def)
 	st.pvpIcon:SetDrawLayer("OVERLAY", 6)
 	text:SetDrawLayer("OVERLAY", 7)
 	text:ClearAllPoints()

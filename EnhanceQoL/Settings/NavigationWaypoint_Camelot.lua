@@ -15,14 +15,18 @@ local isInsideQuestBlob = C_Minimap and C_Minimap.IsInsideQuestBlob
 local hasUserWaypoint = C_Map and C_Map.HasUserWaypoint
 local superTrack = C_SuperTrack
 local canAutoTrackWaypoint = hasUserWaypoint and superTrack.IsSuperTrackingUserWaypoint and superTrack.SetSuperTrackedUserWaypoint
+local clearUserWaypoint = canAutoTrackWaypoint and C_Map.ClearUserWaypoint
 
-function addon.functions.CreateNavigationWaypointFallback()
-	local getPrivateDB = addon.functions.GetPrivateDB
-	local function isEnabled() return getPrivateDB().navigationWaypointFallback == true end
-	local function getScale() return math.max(0.5, math.min(1.5, tonumber(getPrivateDB().navigationWaypointScale) or 1)) end
+local defaultStrata = "TOOLTIP"
+local strataOrder = { "BACKGROUND", "LOW", "MEDIUM", "HIGH", "DIALOG", "FULLSCREEN", "FULLSCREEN_DIALOG", "TOOLTIP" }
+local strataOptions = {}
+for _, strata in ipairs(strataOrder) do
+	strataOptions[strata] = strata
+end
+
+local function createMarker(isEnabled, getScale, getStrata)
 	local marker = CreateFrame("Frame", nil, UIParent)
 	marker:SetSize(32, 32)
-	marker:SetFrameStrata("TOOLTIP")
 	marker:EnableMouse(false)
 	marker:Hide()
 
@@ -30,6 +34,12 @@ function addon.functions.CreateNavigationWaypointFallback()
 	visuals:SetSize(32, 32)
 	visuals:SetPoint("CENTER")
 	visuals:SetScale(getScale())
+	local function updateStrata()
+		local strata = getStrata()
+		marker:SetFrameStrata(strata)
+		visuals:SetFrameStrata(strata)
+	end
+	updateStrata()
 	local icon = visuals:CreateTexture(nil, "ARTWORK")
 	icon:SetPoint("CENTER")
 	local arrow = visuals:CreateTexture(nil, "OVERLAY")
@@ -142,6 +152,7 @@ function addon.functions.CreateNavigationWaypointFallback()
 	marker:RegisterEvent("PLAYER_ENTERING_WORLD")
 	marker:RegisterEvent("NAVIGATION_FRAME_CREATED")
 	marker:RegisterEvent("NAVIGATION_FRAME_DESTROYED")
+	if clearUserWaypoint then marker:RegisterEvent("NAVIGATION_DESTINATION_REACHED") end
 	marker:RegisterEvent("SUPER_TRACKING_CHANGED")
 	if canAutoTrackWaypoint then marker:RegisterEvent("USER_WAYPOINT_UPDATED") end
 	if isInsideQuestBlob then
@@ -155,6 +166,11 @@ function addon.functions.CreateNavigationWaypointFallback()
 			anchor = nil
 		elseif event == "NAVIGATION_FRAME_CREATED" then
 			anchor = region or nav.GetFrame()
+		elseif event == "NAVIGATION_DESTINATION_REACHED" then
+			if not isEnabled() or superTrack.GetHighestPrioritySuperTrackingType() ~= tracking.UserWaypoint or not hasUserWaypoint() then return end
+			cancelWaypointTrack()
+			clearUserWaypoint()
+			superTrack.SetSuperTrackedUserWaypoint(false)
 		elseif event == "PLAYER_INSIDE_QUEST_BLOB_STATE_CHANGED" then
 			refresh(region, isInside)
 			return
@@ -176,17 +192,49 @@ function addon.functions.CreateNavigationWaypointFallback()
 	end)
 	refresh()
 
+	local function updateScale() visuals:SetScale(getScale()) end
+	local function updateEnabled(enabled)
+		if not enabled then cancelWaypointTrack() end
+		refresh()
+	end
+	return updateScale, updateEnabled, updateStrata
+end
+
+function addon.functions.CreateNavigationWaypointFallback()
+	local getPrivateDB = addon.functions.GetPrivateDB
+	local function isEnabled() return getPrivateDB().navigationWaypointFallback == true end
+	local function getScale() return math.max(0.5, math.min(1.5, tonumber(getPrivateDB().navigationWaypointScale) or 1)) end
+	local function getStrata()
+		local strata = getPrivateDB().navigationWaypointStrata
+		return strataOptions[strata] and strata or defaultStrata
+	end
+	local updateScale, updateEnabled, updateStrata
+	local loginFrame = CreateFrame("Frame")
+	loginFrame:RegisterEvent("PLAYER_LOGIN")
+	loginFrame:SetScript("OnEvent", function(self, event)
+		self:UnregisterEvent(event)
+		updateScale, updateEnabled, updateStrata = createMarker(isEnabled, getScale, getStrata)
+	end)
+
 	return {
 		get = isEnabled,
+		strataOptions = strataOptions,
+		strataOrder = strataOrder,
+		defaultStrata = defaultStrata,
+		getStrata = getStrata,
+		setStrata = function(value)
+			if not strataOptions[value] then return end
+			getPrivateDB().navigationWaypointStrata = value
+			if updateStrata then updateStrata() end
+		end,
 		getScale = getScale,
 		setScale = function(value)
 			getPrivateDB().navigationWaypointScale = value
-			visuals:SetScale(getScale())
+			if updateScale then updateScale() end
 		end,
 		set = function(enabled)
 			getPrivateDB().navigationWaypointFallback = enabled == true
-			if not enabled then cancelWaypointTrack() end
-			refresh()
+			if updateEnabled then updateEnabled(enabled) end
 			return true
 		end,
 	}

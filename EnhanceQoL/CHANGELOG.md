@@ -1,5 +1,43 @@
 # Changelog
 
+## [13.24.4] - 2026-11-26
+
+### Added
+
+- Toggle the current-zone filter, quest NPC names, and the 3D waypoint from the Quest Tracker header. The buttons stay visible and are disabled in combat.
+- Use Auction Sales Quick Sell to post bag items one offer at a time with Space or sell a selected item directly. Skip items and set an optional price floor.
+- Preview mana costs on Resource Bars and the Player Unit Frame with a configurable texture and color. Shared Resource Bars support a separate Mana override.
+- Choose the layer of the 3D waypoint relative to other interface windows.
+- Buy stackable reagents and individual auctions from the Craft Shopper list. Confirmed purchases immediately update the missing quantities.
+- Set Party Frame strata in Edit Mode and adjust the portrait strata and frame level while the portrait stays attached.
+- Choose the minimum item quality for Floating Loot reward notifications.
+
+### Changed
+
+- The Auction Sales window matches the Auction House layout, groups identical items, and flags prices below vendor value. Open offers directly from each watchlist row.
+- The Craft Shopper list uses the Auction House layout, with inline search and a compact purchase dialog.
+
+### Fixed
+
+- Auction Sales price suggestions ignore isolated low listings.
+- Auction Sales Price History opens and switches date ranges without errors, and chart labels stay inside the panel.
+- The Precise format in Custom Aura Containers shows hours and minutes on long buff and debuff timers.
+- Tracked map pins you placed clear when you reach them.
+- The Well Fed filter in the Food & Drink Macro excludes Clam Linguine and the other affected clam dishes.
+
+## [13.24.3] - 2026-11-26
+
+### Added
+
+- Unit Frames: Show the PvP flag countdown on your player frame with configurable text position, font, and color.
+
+### Fixed
+
+- Experience Bar: The bar keeps its last progress when XP data is unavailable and hides when the game disables XP tracking.
+- Cooldown Panels: Changing forms refreshes only the panels that need an update.
+- Navigation: The 3D waypoint keeps its configured size after a UI reload.
+- Food Buff Reminder: Clam Linguine and other previously missing Well Fed items appear in the food selection.
+
 ## [13.24.2] - 2026-11-25
 
 ### Added

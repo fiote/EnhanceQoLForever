@@ -2,7 +2,7 @@
 ## X-EQOL-Flavor: forever
 ## Title: Enhance QoL Core
 ## Author: R41Z0R
-## Version: 13.24.2
+## Version: 13.24.4
 ## IconTexture: Interface\AddOns\EnhanceQoL\Icons\Icon.tga
 ## Category: Quality of Life
 ## X-Category: Quality of Life
@@ -49,6 +49,7 @@ General\functions.lua
 General\BufferedPaste.lua
 General\PetFoodIndicator_Camelot.lua
 General\ManaRegen_Camelot.lua
+General\ManaCostPreview_Camelot.lua
 Data\SpellRankData_Camelot.lua
 Submodules\AutoRankUp.lua
 General\EquipmentRecommendations_Camelot.lua

@@ -617,10 +617,12 @@ local function getDefaultAuraDurationTextProfile(kind)
 	return normalizeDefaultAuraDurationTextProfile(getDefaultAuraDBValue(kind, "DurationTextProfile"))
 end
 
+local PRECISE_AURA_DURATION_TEXT_OPTIONS = { showHourMinutes = true }
+
 local function applyDefaultAuraDurationTextProfile(button, config)
 	if not (button and button.Cooldown and addon.functions and addon.functions.ApplyDurationTextProfileToCooldownFrame) then return false end
 	config = config or getDefaultAuraStyleConfig(button.eqolDefaultAuraKind)
-	return addon.functions.ApplyDurationTextProfileToCooldownFrame(button.Cooldown, config.durationTextProfile)
+	return addon.functions.ApplyDurationTextProfileToCooldownFrame(button.Cooldown, config.durationTextProfile, config.durationTextOptions)
 end
 
 local function getDefaultAuraIconsPerRow(value, kind)
@@ -957,6 +959,7 @@ getDefaultAuraStyleConfig = function(kind)
 	entry.drawEdge = getDefaultAuraDrawEdge(kind)
 	entry.cooldownReverse = getDefaultAuraCooldownReverse(kind)
 	entry.durationTextProfile = getDefaultAuraDurationTextProfile(kind)
+	entry.durationTextOptions = entry.durationTextProfile == "PRECISE" and PRECISE_AURA_DURATION_TEXT_OPTIONS or nil
 	entry.durationTextVersion = addon.DurationText and addon.DurationText.version or 0
 	entry.countEnabled = getDefaultAuraDBValue(kind, "CountEnabled") ~= false
 	entry.useDebuffTypeBorderColor = useDebuffTypeBorderColor
@@ -1374,7 +1377,7 @@ local function refreshDefaultAuraSamples(kind)
 		local showCount = config.countEnabled and (i == 1 or i == 6 or i == 13)
 		sample.Count:SetText(showCount and tostring((i % 4) + 2) or "")
 		sample.Count:SetShown(showCount)
-		setDefaultAuraCooldownDuration(sample, GetTime() - i, 30 + i * 8)
+		setDefaultAuraCooldownDuration(sample, GetTime() - i, i == 1 and 7200 or 30 + i * 8)
 		sample:ClearAllPoints()
 		sample:SetSize(size, size)
 		local column, row
@@ -1983,7 +1986,7 @@ local function initializeDefaultNativeAuraButton(button, config)
 		setAuraFontStringStyle(duration, "Duration", DEFAULT_AURA_DURATION_COLOR, kind, config.durationTextStyle)
 		positionAuraFontString(duration, button, "Duration", "BOTTOM", 0, -1, kind, config.durationTextStyle)
 		local options = addon.functions and addon.functions.GetAuraButtonDurationTextOptions
-			and addon.functions.GetAuraButtonDurationTextOptions(config.durationTextProfile)
+			and addon.functions.GetAuraButtonDurationTextOptions(config.durationTextProfile, config.durationTextOptions)
 			or nil
 		button:SetDurationText(duration, options)
 	end

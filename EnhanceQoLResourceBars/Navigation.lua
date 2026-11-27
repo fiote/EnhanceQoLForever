@@ -72,7 +72,7 @@ function ResourceBars.PrepareNavigationSettings(settings, types, barType, possib
 			elseif field == "powerTypeOverrideType" then group = "selection"
 			elseif field == "defaultPowerColor" then group = "base"
 			elseif field == "powerTypeOverrideEnabled" then group = "activation"
-			elseif field == "powerTypeOverrideBarTexture" or field == "separatedOffset" then group = "bar"
+			elseif field == "powerTypeOverrideBarTexture" or field == "separatedOffset" or field:match("^powerTypeOverrideManaCostPreview") then group = "bar"
 			elseif field:match("^powerTypeOverride.*Text") or field == "powerTypeOverrideShortNumbers"
 				or field == "powerTypeOverridePercentRounding" or field == "powerTypeOverrideHidePercentSign" then group = "text" end
 			powerGroups[group][#powerGroups[group] + 1] = data
@@ -158,6 +158,10 @@ function ResourceBars.PrepareNavigationSettings(settings, types, barType, possib
 		end
 	end
 	local links = {
+		powerTypeOverrideManaCostPreview = "powerTypeOverrideType",
+		powerTypeOverrideManaCostPreviewEnabled = "powerTypeOverrideType",
+		powerTypeOverrideManaCostPreviewTexture = "powerTypeOverrideType",
+		powerTypeOverrideManaCostPreviewColor = "powerTypeOverrideType",
 		visibilityFadeStrength = "separateCombatOpacity", opacityInCombat = "separateCombatOpacity", opacityOutOfCombat = "separateCombatOpacity",
 		textAnchor = "textStyle", textOffsetX = "textStyle", textOffsetY = "textStyle",
 		textLeftOffsetX = "textLeft", textLeftOffsetY = "textLeft", textRightOffsetX = "textRight", textRightOffsetY = "textRight",

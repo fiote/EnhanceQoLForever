@@ -18,6 +18,7 @@ local dateFormats = { dayFirst = "%d.%m. %H:%M", monthFirst = "%m/%d %H:%M", iso
 local sorts = { { sortOrder = Enum.AuctionHouseSortOrder.Price, reverseSort = false } }
 local searchEvents = { "COMMODITY_SEARCH_RESULTS_UPDATED", "COMMODITY_SEARCH_RESULTS_ADDED", "ITEM_SEARCH_RESULTS_UPDATED", "ITEM_SEARCH_RESULTS_ADDED" }
 local browseEvents = { "AUCTION_HOUSE_BROWSE_RESULTS_UPDATED", "AUCTION_HOUSE_BROWSE_RESULTS_ADDED", "AUCTION_HOUSE_BROWSE_FAILURE" }
+local quickEvents = { "AUCTION_HOUSE_AUCTION_CREATED", "AUCTION_HOUSE_SHOW_ERROR", "AUCTION_HOUSE_POST_ERROR", "PLAYER_REGEN_DISABLED" }
 local bagEvents = { "BAG_UPDATE_DELAYED", "ITEM_LOCK_CHANGED" }
 
 function Sales:IsEnabled()
@@ -504,7 +505,7 @@ function Sales:ShowScanTooltip(button)
 	GameTooltip:SetText(L["vendorAuctionScan"])
 	GameTooltip:AddLine(L["vendorAuctionScanTooltip"], 1, 1, 1, true)
 	if self.fullScan then
-		GameTooltip:AddLine(marketLabel(self.fullScan.side) .. " · " .. button:GetText(), 0.48, 0.76, 0.96)
+		GameTooltip:AddLine(marketLabel(self.fullScan.side) .. " · " .. (button.scanStatus or L["vendorAuctionScanWaiting"]), 0.48, 0.76, 0.96)
 	else
 		local wait = self:GetFullScanCooldown()
 		if wait > 0 then GameTooltip:AddLine(cooldownText(wait), 1, 0.71, 0.44, true) end
@@ -544,13 +545,13 @@ function Sales:UpdateScanDisplay()
 		button:SetScript("OnUpdate", nil)
 		local percent = scan.percent
 		local progress = scan.browse and scan.started and L["vendorAuctionScanBrowseProgress"]:format(scan.count)
-		button:SetText(progress or (percent and L["vendorAuctionScanProgress"]:format(percent)) or L["vendorAuctionScanWaiting"])
+		button.scanStatus = progress or (percent and L["vendorAuctionScanProgress"]:format(percent)) or L["vendorAuctionScanWaiting"]
 		bar:SetValue(percent or 0)
 		bar.pulse:SetShown(percent == nil)
 		bar:Show()
 	else
 		local wait = self:GetFullScanCooldown()
-		button:SetText(L["vendorAuctionScan"])
+		button.scanStatus = nil
 		button:SetScript("OnUpdate", wait > 0 and updateCooldownButton or nil)
 		bar:Hide()
 	end
@@ -711,7 +712,7 @@ function Sales:StartFullScan(side)
 		print(L["vendorAuctionScanFailed"])
 		return
 	end
-	if self.fullScan or InCombatLockdown() or self.watchSearch or (self.search and not self.search.received)
+	if self.fullScan or self.quick or InCombatLockdown() or self.watchSearch or (self.search and not self.search.received)
 		or not AH.IsThrottledMessageSystemReady() then
 		print(L["vendorAuctionBusy"])
 		return
@@ -796,14 +797,6 @@ function Sales:ReadFullScan()
 	step()
 end
 
-local function locationFor(row)
-	if not row or isExcluded(row.key.itemID) then return end
-	local location = ItemLocation:CreateFromBagAndSlot(row.bag, row.slot)
-	local info = C_Container.GetContainerItemInfo(row.bag, row.slot)
-	if not info or info.isLocked or info.isBound or info.hyperlink ~= row.link or not AH.IsSellItemValid(location, false) then return end
-	if C_Item.GetItemGUID(location) == row.guid then return location end
-end
-
 local function sellFrameFor(location)
 	if not location or not AuctionHouseFrame or not AuctionHouseFrame:IsShown() then return end
 	local status = AH.GetItemCommodityStatus(location)
@@ -815,36 +808,67 @@ local function sameItem(location, other)
 	return other and other:IsBagAndSlot() and C_Item.DoesItemExist(other) and C_Item.GetItemGUID(location) == C_Item.GetItemGUID(other)
 end
 
+local function isStaged(location)
+	local native = sellFrameFor(location)
+	return native and native:IsShown() and sameItem(location, native:GetItem())
+end
+
+local function locationFor(row)
+	if not row or isExcluded(row.key.itemID) then return end
+	local location = ItemLocation:CreateFromBagAndSlot(row.bag, row.slot)
+	local info = C_Container.GetContainerItemInfo(row.bag, row.slot)
+	if not info or info.isBound or info.hyperlink ~= row.link or C_Item.GetItemGUID(location) ~= row.guid then return end
+	-- Blizzard locks the selected bag slot while its sell frame displays it.
+	if info.isLocked then
+		if isStaged(location) then return location end
+	elseif AH.IsSellItemValid(location, false) then
+		return location
+	end
+end
+
 local function listingStats(key, exactKey, commodity, limit, collectBook)
 	local best, quantity, matched = nil, 0, 0
 	local book = collectBook and {}
-	local function collect(price, count)
+	local function collect(price, count, sellers)
 		if count <= 0 then return end
 		quantity = quantity + count
 		if price and price > 0 then
 			if not limit or price <= limit then matched = matched + count end
 			if not best or price < best then best = price end
-			if book then book[price] = (book[price] or 0) + count end
+			if book then
+				local tier = book[price]
+				if not tier then
+					tier = { price = price, count = 0, sellers = 0 }
+					book[price] = tier
+				end
+				tier.count = tier.count + count
+				tier.sellers = tier.sellers + math.max(1, sellers or 1)
+			end
 		end
 	end
 	if commodity then
 		for index = 1, AH.GetNumCommoditySearchResults(key.itemID) do
 			local result = AH.GetCommoditySearchResultInfo(key.itemID, index)
-			if result then collect(result.unitPrice, result.quantity - result.numOwnerItems) end
+			if result then
+				local ownItems = result.numOwnerItems
+				local sellers = result.totalNumberOfOwners
+				if sellers and ownItems > 0 then sellers = sellers - 1 end
+				collect(result.unitPrice, result.quantity - ownItems, sellers)
+			end
 		end
 	else
 		local id = exactKey and priceKey(exactKey)
 		for index = 1, AH.GetNumItemSearchResults(key) do
 			local result = AH.GetItemSearchResultInfo(key, index)
 			if result and not result.containsOwnerItem and not result.containsAccountItem and (not id or priceKey(result.itemKey) == id) then
-				collect(result.buyoutAmount, result.quantity)
+				collect(result.buyoutAmount, result.quantity, result.totalNumberOfOwners)
 			end
 		end
 	end
 	local tiers
 	if book then
 		tiers = {}
-		for price, count in pairs(book) do tiers[#tiers + 1] = { price = price, count = count } end
+		for _, tier in pairs(book) do tiers[#tiers + 1] = tier end
 		table.sort(tiers, function(a, b) return a.price < b.price end)
 	end
 	return best, quantity, matched, tiers
@@ -1196,10 +1220,11 @@ local function getBagRows(rows, market)
 	for bag = 0, NUM_TOTAL_EQUIPPED_BAG_SLOTS do
 		for slot = 1, C_Container.GetContainerNumSlots(bag) do
 			local info = C_Container.GetContainerItemInfo(bag, slot)
-			if info and info.hyperlink and not isExcluded(info.itemID) and not info.isLocked and not info.isBound and not _G.C_WowTokenPublic.IsAuctionableWowToken(info.itemID) then
+			if info and info.hyperlink and not isExcluded(info.itemID) and not info.isBound and not _G.C_WowTokenPublic.IsAuctionableWowToken(info.itemID) then
 				local location = ItemLocation:CreateFromBagAndSlot(bag, slot)
 				local commodity = AH.GetItemCommodityStatus(location)
-				if AH.IsSellItemValid(location, false) and commodity ~= Enum.ItemCommodityStatus.Unknown then
+				local valid = info.isLocked and not market and isStaged(location) or not info.isLocked and AH.IsSellItemValid(location, false)
+				if valid and commodity ~= Enum.ItemCommodityStatus.Unknown then
 					local key = bagItemKey(location, info.itemID, commodity == Enum.ItemCommodityStatus.Commodity)
 					local guid = C_Item.GetItemGUID(location)
 					if key and guid then
@@ -1261,12 +1286,12 @@ function Sales:ReadResults(event, arg)
 	if price or full then storeQuote(key, price) end
 	search.received = true
 	search.status = not price and (full and L["vendorAuctionNoPrice"] or L["vendorAuctionNoVisiblePrice"]) or nil
+	if search.row then self:ReadSellOffer(search, queryKey, full) end
 	if price then
 		local quote = self.live[key]
 		C_Timer.After(liveLifetime, function()
 			if self.live[key] == quote then self:Refresh(self.mode == "sell") end
 		end)
-
 	end
 	self:Refresh(self.mode == "sell")
 end
@@ -1275,14 +1300,18 @@ function Sales:StartSearch(search)
 	self.search = search
 	search.status = L["vendorCraftShopperWaitingForPrice"]
 	C_Timer.After(10, function()
-		if self.search ~= search or search.received then return end
+		if self.search ~= search or search.received or search.quick then return end
 		self.search = nil
 		self.status = L["vendorAuctionTimedOut"]
 		self:Refresh()
 	end)
 end
 
-function Sales:SelectBag(row)
+function Sales:SelectBag(row, quick)
+	if not quick then
+		if self.quickPost then return end
+		self:StopQuickSell()
+	end
 	if not self.open or not AuctionHouseFrame or not AuctionHouseFrame:IsShown() then
 		self.selected = row
 		self:Refresh()
@@ -1303,9 +1332,10 @@ function Sales:SelectBag(row)
 	local queryKey = commodity and key or _G.AuctionHouseUtil.ConvertItemSellItemKey(AH.GetItemKeyFromItem(location))
 	if not queryKey then return end
 	self.selected = row
-	self:StartSearch({ key = queryKey, exactKey = key, commodity = commodity, row = row })
+	self:StartSearch({ key = queryKey, exactKey = key, commodity = commodity, row = row, quick = quick })
 	AuctionHouseFrame:SetPostItem(location)
 	self:Refresh()
+	return true
 end
 
 function Sales:FinishWatch(search, quantity, matched, price, full, failed, tiers)
@@ -1349,7 +1379,7 @@ function Sales:ReadWatchResults(event, arg)
 end
 
 function Sales:AdvanceWatchScan()
-	if self.fullScan then return end
+	if self.fullScan or self.quick then return end
 	if not self.open or not AuctionHouseFrame or not AuctionHouseFrame:IsShown() then return end
 	local search = self.watchSearch
 	local pending = self.pendingWatchFind
@@ -1480,24 +1510,25 @@ function Sales:SearchWatchedItem()
 end
 
 local panelWidth, panelHeight = 420, 540
-local historyHeight, historyGap, minimumPanelHeight = 284, 8, 350
+local historyHeight, historyGap, minimumPanelHeight = 308, 8, 350
 local rowNameLeft, rowQuantityRight, rowPriceRight = 44, 106, 8
-local rowGutter = 13
+local rowGutter = 23
+local watchActionWidth, watchActionInset = 78, 90
 local palette = {
-	panel = { 0.035, 0.044, 0.060, 0.98 },
-	card = { 0.055, 0.071, 0.094, 1 },
-	border = { 0.18, 0.23, 0.31, 1 },
-	row = { 0.044, 0.056, 0.074, 1 },
-	alternate = { 0.053, 0.068, 0.087, 1 },
-	hover = { 0.27, 0.52, 0.71, 0.23 },
-	selected = { 0.09, 0.19, 0.29, 1 },
-	accent = { 0.48, 0.76, 0.96, 1 },
-	text = { 0.92, 0.94, 0.98, 1 },
-	muted = { 0.65, 0.72, 0.81, 1 },
-	dim = { 0.48, 0.55, 0.64, 1 },
+	panel = { 0.09, 0.07, 0.05, 1 },
+	card = { 0.24, 0.17, 0.11, 1 },
+	border = { 0.34, 0.26, 0.17, 1 },
+	row = { 0.10, 0.075, 0.05, 0.95 },
+	alternate = { 0.15, 0.11, 0.075, 0.95 },
+	hover = { 1, 0.78, 0.32, 0.17 },
+	selected = { 0.31, 0.22, 0.11, 1 },
+	accent = { 1, 0.82, 0, 1 },
+	text = { 1, 1, 1, 1 },
+	muted = { 0.87, 0.78, 0.62, 1 },
+	dim = { 0.62, 0.56, 0.47, 1 },
 	good = { 0.48, 0.85, 0.58, 1 },
-	ready = { 0.062, 0.14, 0.11, 1 },
-	warning = { 1, 0.71, 0.44, 1 },
+	ready = { 0.10, 0.19, 0.10, 1 },
+	warning = { 1, 0.63, 0.34, 1 },
 }
 local white = "Interface\\Buttons\\WHITE8x8"
 local border = { bgFile = white, edgeFile = white, edgeSize = 1 }
@@ -1522,22 +1553,21 @@ local function label(parent, font, x, y, color)
 	return text
 end
 
-local function button(parent, text, width, onClick, primary)
-	local control = CreateFrame("Button", nil, parent, "BackdropTemplate")
-	control:SetSize(width, 26)
-	paint(control, primary and palette.selected or palette.card)
-	local caption = control:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	caption:SetPoint("LEFT", 5, 0)
-	caption:SetPoint("RIGHT", -5, 0)
-	caption:SetWordWrap(false)
-	control:SetFontString(caption)
+local function auctionWindow(name, title)
+	local frame = CreateFrame("Frame", name, UIParent, "PortraitFrameTemplate")
+	frame:SetBorder("ButtonFrameTemplateNoPortrait")
+	frame:SetPortraitShown(false)
+	frame:SetTitleOffsets(26, -26)
+	frame:SetTitle(title)
+	return frame
+end
+
+local function button(parent, text, width, onClick)
+	local control = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+	control:SetSize(width, 24)
 	control:SetText(text)
-	local hover = fill(control, "HIGHLIGHT", palette.hover)
-	hover:SetAllPoints()
-	control:SetHighlightTexture(hover)
+	control:GetFontString():SetWordWrap(false)
 	control:SetScript("OnClick", onClick)
-	control:SetScript("OnEnable", function() caption:SetTextColor(unpack(palette.text)) end)
-	control:SetScript("OnDisable", function() caption:SetTextColor(unpack(palette.dim)) end)
 	return control
 end
 
@@ -1579,26 +1609,37 @@ function Sales:UpdateWatchDropHint()
 	panel.watchInputDrop.hint:SetShown(highlightInput and panel.input:GetText() == "")
 end
 
-function Sales:UpdateWatchBadge()
-	local button = self.panel.watchTab
+function Sales:UpdateWatchTab()
+	local tab = self.panel.watchTab
 	local count = 0
 	for id, entry in pairs(watchList() or {}) do
 		if watchReady(entry, self.watchResults[id]) then count = count + 1 end
 	end
-	button.readyCount = count
-	button.badge.text:SetText(count)
-	button.badge:SetWidth(math.max(20, button.badge.text:GetStringWidth() + 10))
-	button.badge:SetShown(count > 0)
-	button:GetFontString():SetPoint("RIGHT", count > 0 and (-button.badge:GetWidth() - 9) or -5, 0)
+	tab.readyCount = count
+	local title = L["vendorAuctionWatch"]
+	tab:SetText(count > 0 and ("%s (%d)"):format(title, count) or title)
 end
 
-local function tab(parent, text, onClick)
-	local control = button(parent, text, 128, onClick)
+local function tab(parent, text, width, onClick)
+	local control = CreateFrame("Button", nil, parent, "BackdropTemplate")
+	control:SetSize(width, 26)
+	paint(control, palette.panel)
+	local caption = control:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	caption:SetPoint("LEFT", 5, 0)
+	caption:SetPoint("RIGHT", -5, 0)
+	caption:SetWordWrap(false)
+	control:SetFontString(caption)
+	control:SetText(text)
+
+	local hover = fill(control, "HIGHLIGHT", palette.hover)
+	hover:SetAllPoints()
+	control:SetHighlightTexture(hover)
 	local marker = fill(control, "OVERLAY", palette.accent)
 	marker:SetHeight(2)
 	marker:SetPoint("BOTTOMLEFT", 8, 1)
 	marker:SetPoint("BOTTOMRIGHT", -8, 1)
 	control.marker = marker
+	control:SetScript("OnClick", onClick)
 	return control
 end
 
@@ -1659,6 +1700,7 @@ local function headerColumn(parent, width, anchor, x, field, align, sales, textI
 end
 
 function Sales:SortBy(field)
+	self:StopQuickSell()
 	local current = self.sorts[self.mode]
 	self.sorts[self.mode] = { field = field, ascending = not current or current.field ~= field or not current.ascending }
 	if self.mode == "market" then
@@ -1737,9 +1779,359 @@ local function filteredRows(items, selling, search, sorting)
 	return output
 end
 
+local function vendorUnitPrice(link)
+	local value = select(11, C_Item.GetItemInfo(link))
+	if (issecretvalue and issecretvalue(value)) or type(value) ~= "number" or value < 0 then return end
+	return value
+end
+
+local function groupBagRows(rows)
+	local groups, byKey = {}, {}
+	for _, row in ipairs(rows) do
+		local id = priceKey(row.key)
+		local group = byKey[id]
+		if not group then
+			group = { key = row.key, link = row.link, icon = row.icon, quality = row.quality, count = 0, value = 0, stacks = {} }
+			byKey[id] = group
+			groups[#groups + 1] = group
+		end
+		group.count = group.count + row.count
+		group.value = group.value + row.value
+		group.stacks[#group.stacks + 1] = row
+	end
+	table.sort(groups, function(a, b)
+		if a.value ~= b.value then return a.value > b.value end
+		local first, second = a.stacks[1], b.stacks[1]
+		if first.bag ~= second.bag then return first.bag < second.bag end
+		return first.slot < second.slot
+	end)
+	return groups
+end
+
+local function quickPrice(search, key, market)
+	local _, _, _, tiers = listingStats(key, search.exactKey, search.commodity, nil, true)
+	if #tiers == 0 then return end
+	local historyMedian
+	if search.commodity and market then
+		local samples = {}
+		for _, point in ipairs(Sales:GetPriceHistory(search.row.key.itemID, market, 7).points) do
+			samples[#samples + 1] = point.price
+		end
+		if #samples >= 3 then historyMedian = median(samples) end
+	end
+
+	for index, tier in ipairs(tiers) do
+		local ceiling = tier.price + math.max(1, math.floor(tier.price * 0.05))
+		local nextTier, thirdTier = tiers[index + 1], tiers[index + 2]
+		local nearby = nextTier and nextTier.price <= ceiling
+		-- A large stack from one seller does not establish the going price on its own.
+		local supported = tier.sellers >= 3
+			or (tier.sellers >= 2 and nearby)
+			or (thirdTier and thirdTier.price <= ceiling and (not search.commodity or tier.count >= 3))
+		if supported then return tier.price, historyMedian or tier.price end
+	end
+
+	-- On thin markets, use a live offer only when it closely matches recent scans.
+	if historyMedian then
+		for _, tier in ipairs(tiers) do
+			if tier.price >= 0.9 * historyMedian and tier.price <= 1.1 * historyMedian then return tier.price, historyMedian end
+		end
+	end
+	return nil, nil, tiers[#tiers].price
+end
+
+local function nativeDialogOpen()
+	local overlay = AuctionHouseFrame and AuctionHouseFrame.DialogOverlay
+	return overlay and overlay:IsShown()
+end
+
+local function nativeOfferMatches(native, commodity, offer)
+	local price
+	if commodity then
+		price = native:GetUnitPrice()
+	else
+		local bid, buyout = native:GetPrice()
+		if bid then return false end
+		price = buyout
+	end
+	return price == offer.price and native:GetQuantity() == offer.quantity
+end
+
+local function setNativeOffer(native, commodity, offer)
+	native.QuantityInput:SetQuantity(offer.quantity)
+	if not commodity then native:SetSecondaryPriceInputEnabled(false) end
+	native.PriceInput:SetAmount(offer.price)
+	return nativeOfferMatches(native, commodity, offer)
+end
+
+function Sales:GuardNativePost(quick, native)
+	if quick.postGuard then quick.postGuard:Hide() end
+	if not native.quickSellGuard then
+		local guard = CreateFrame("Button", nil, native.PostButton)
+		guard:SetAllPoints()
+		guard:SetFrameLevel(native.PostButton:GetFrameLevel() + 1)
+		guard:SetScript("OnClick", function() self:PostQuickSell() end)
+		native.quickSellGuard = guard
+	end
+	quick.postGuard = native.quickSellGuard
+	quick.postGuard:Show()
+end
+
+function Sales:ClearQuickSellDraft(quick)
+	if quick.postGuard then quick.postGuard:Hide() end
+	local location = not self.quickPost and not InCombatLockdown() and not nativeDialogOpen() and locationFor(quick.row)
+	if location and isStaged(location) then AuctionHouseFrame:ClearPostItem() end
+end
+
+function Sales:StopQuickSell(message)
+	local quick = self.quick
+	if not quick then return end
+	self.quick = nil
+	if quick.ticker then quick.ticker:Cancel() end
+	if self.search and self.search.quick == quick then self.search = nil end
+	self:ClearQuickSellDraft(quick)
+	if self.quickPost and self.quickPost.confirmed then self.quickPost = nil end
+	self.panel.quickKeys:EnableKeyboard(false)
+	self.panel.quickKeys.spaceDown = nil
+	self.status = message
+	self:Refresh(true)
+end
+
+function Sales:ReadSellOffer(search, key, full)
+	local quick = search.quick
+	if search.offer or (quick and (quick ~= self.quick or quick.blocked or self.quickPost)) then return end
+	if not full then
+		if quick then quick.page = key end
+		return
+	end
+	if quick then quick.page = nil end
+	local price, reference, highest = quickPrice(search, key, self.market)
+	local vendor = vendorUnitPrice(search.row.link)
+	local floor = vendorDB().quickSellFloor or 0
+	local threshold = reference and math.ceil(reference * floor / 100)
+	local offer = { market = self.market, expires = GetTime() + 30 }
+	local native = sellFrameFor(locationFor(search.row))
+	if vendor == nil then
+		C_Item.RequestLoadItemDataByID(search.row.key.itemID)
+		offer.message = L["vendorAuctionQuickNoVendor"]
+	elseif (price or highest) and (price or highest) < vendor then
+		offer.message = L["vendorAuctionQuickBelowVendor"]:format(coinText(price or highest), coinText(vendor))
+	elseif not price then
+		offer.message = L["vendorAuctionQuickNoPrice"]
+	elseif floor > 0 and price < threshold then
+		offer.message = L["vendorAuctionQuickUnderFloor"]:format(coinText(price), coinText(threshold))
+	else
+		local increment = AH.SupportsCopperValues() and 1 or _G.COPPER_PER_SILVER
+		offer.price = math.ceil(price / increment) * increment
+		offer.quantity = search.commodity and search.row.count or 1
+		if not native or not setNativeOffer(native, search.commodity, offer) then
+			offer.price = nil
+			offer.message = L["vendorAuctionQuickStopped"]
+		end
+	end
+	search.offer = offer
+	if not quick then
+		if native and not offer.price then native.PriceInput:SetAmount(0) end
+		return
+	end
+	if offer.price then
+		quick.offer = offer
+		quick.deadline = offer.expires
+		self.status = L["vendorAuctionQuickOffer"]:format(offer.quantity, coinText(offer.price * offer.quantity))
+	else
+		quick.blocked = true
+		self:ClearQuickSellDraft(quick)
+		self.status = offer.message
+	end
+end
+
+function Sales:SkipQuickSell()
+	local quick = self.quick
+	if not quick or self.quickPost or not quick.row then return end
+	self.search = nil
+	self:ClearQuickSellDraft(quick)
+	local key = priceKey(quick.row.key)
+	repeat
+		quick.index = quick.index + 1
+	until not quick.rows[quick.index] or priceKey(quick.rows[quick.index].key) ~= key
+	quick.row, quick.offer, quick.page, quick.blocked = nil, nil, nil, nil
+	quick.deadline = GetTime() + 12
+	self.status = nil
+	self:AdvanceQuickSell()
+	self:Refresh(true)
+end
+
+function Sales:AdvanceQuickSell()
+	local quick = self.quick
+	if not quick then return end
+	if not self.open or not AuctionHouseFrame:IsShown() or self.market ~= quick.market or InCombatLockdown() then
+		self:StopQuickSell(L["vendorAuctionQuickStopped"])
+		return
+	end
+
+	if quick.blocked then return end
+	local post = self.quickPost
+	if post and post.confirmed then
+		local row = post.row
+		local info = C_Container.GetContainerItemInfo(row.bag, row.slot)
+		local remaining = info and info.hyperlink == row.link and C_Item.GetItemGUID(ItemLocation:CreateFromBagAndSlot(row.bag, row.slot)) == row.guid
+			and info.stackCount or 0
+		if remaining == row.count - quick.offer.quantity and not (remaining > 0 and info.isLocked) then
+			self.quickPost = nil
+			if remaining == 0 then
+				quick.index = quick.index + 1
+			else
+				row.count = remaining
+			end
+			quick.row, quick.offer = nil, nil
+			quick.deadline = GetTime() + 12
+			self:Refresh(true)
+		end
+	end
+	if post and not post.confirmed and nativeDialogOpen() then
+		quick.deadline = GetTime() + 12
+		return
+	end
+	if GetTime() >= quick.deadline then
+		self:StopQuickSell(L["vendorAuctionTimedOut"])
+		return
+	end
+	if self.quickPost or self.fullScan or self.watchSearch or nativeDialogOpen() or GetCursorInfo() or not AH.IsThrottledMessageSystemReady() then return end
+	if quick.row then
+		local location = locationFor(quick.row)
+		local native, commodity = sellFrameFor(location)
+		if not self.search or self.search.quick ~= quick or not native or not native:IsShown() or not sameItem(location, native:GetItem()) then
+			self:StopQuickSell(L["vendorAuctionQuickStopped"])
+			return
+		end
+		local offer = quick.offer
+		if offer and not nativeOfferMatches(native, commodity, offer) then setNativeOffer(native, commodity, offer) end
+		local key = quick.page
+		if key then
+			local search = self.search
+			quick.page = nil
+			if search.commodity then
+				AH.RequestMoreCommoditySearchResults(key.itemID)
+			else
+				AH.RequestMoreItemSearchResults(key)
+			end
+			if self.quick == quick and hasFullResults(key, search.commodity) then
+				self:ReadSellOffer(search, key, true)
+				self:Refresh()
+			end
+		end
+		return
+	end
+
+	local row = quick.rows[quick.index]
+	if not row then
+		self:StopQuickSell(L["vendorAuctionQuickDone"])
+		return
+	end
+	local info = C_Container.GetContainerItemInfo(row.bag, row.slot)
+	if not locationFor(row) or info.stackCount ~= row.count then
+		self:StopQuickSell(L["vendorAuctionQuickStopped"])
+		return
+	end
+	quick.row = row
+	self.status = nil
+	if not self:SelectBag(row, quick) then
+		self:StopQuickSell(L["vendorAuctionQuickStopped"])
+		return
+	end
+	if self.quick == quick and not quick.blocked then
+		local native = sellFrameFor(locationFor(row))
+		if native then
+			self:GuardNativePost(quick, native)
+			if not quick.offer then native.PriceInput:SetAmount(0) end
+		end
+	end
+end
+
+function Sales:PostQuickSell()
+	local quick = self.quick
+	local offer = quick and quick.offer
+	if not offer or self.quickPost or GetTime() >= quick.deadline then return end
+	if not self.open or self.market ~= quick.market or self.fullScan or InCombatLockdown() or GetCursorInfo()
+		or nativeDialogOpen() or not AH.IsThrottledMessageSystemReady() then return end
+	local row = quick.row
+	local location = locationFor(row)
+	local native, commodity = sellFrameFor(location)
+	local info = location and C_Container.GetContainerItemInfo(row.bag, row.slot)
+	if not native or not native:IsShown() or not sameItem(location, native:GetItem()) or info.stackCount ~= row.count then
+		self:StopQuickSell(L["vendorAuctionQuickStopped"])
+		return
+	end
+	local vendor = vendorUnitPrice(row.link)
+	if vendor == nil or offer.price < vendor then
+		quick.offer, quick.blocked = nil, true
+		self:ClearQuickSellDraft(quick)
+		self.status = vendor == nil and L["vendorAuctionQuickNoVendor"]
+			or L["vendorAuctionQuickBelowVendor"]:format(coinText(offer.price), coinText(vendor))
+		self:Refresh(true)
+		return
+	end
+	if not nativeOfferMatches(native, commodity, offer) then
+		if not setNativeOffer(native, commodity, offer) then self:StopQuickSell(L["vendorAuctionQuickStopped"]) end
+		return
+	end
+	local allowed, reason = native:CanPostItem()
+	if not allowed then
+		self:StopQuickSell(reason or L["vendorAuctionQuickStopped"])
+		return
+	end
+	self.quickPost = { row = row }
+	quick.deadline = GetTime() + 12
+	self.status = L["vendorAuctionQuickPosting"]
+	native:PostItem()
+	self:Refresh()
+end
+
+function Sales:StartQuickSell(selected)
+	if self.quick or self.quickPost or not self.open or self.mode ~= "sell" or self.fullScan
+		or InCombatLockdown() or nativeDialogOpen() or GetCursorInfo() then return end
+	local rows = {}
+	if selected then
+		rows[1] = selected
+	else
+		getBagRows(self.bags)
+		local visible = filteredRows(groupBagRows(self.bags), true, self.filters.sell or "", self.sorts.sell)
+		for _, entry in ipairs(visible) do
+			for _, stack in ipairs(entry.row.stacks) do rows[#rows + 1] = stack end
+		end
+	end
+	if #rows == 0 then self:Refresh(true) return end
+	local quick = { rows = rows, index = 1, market = self.market, deadline = GetTime() + 12 }
+	local search = selected and self.search
+	local offer = search and search.row == selected and search.offer
+	local location = offer and locationFor(selected)
+	local native, commodity = sellFrameFor(location)
+	local reuse = offer and offer.price and offer.market == self.market and offer.expires > GetTime()
+		and native and native:IsShown() and sameItem(location, native:GetItem()) and nativeOfferMatches(native, commodity, offer)
+	if reuse then
+		quick.row, quick.offer, quick.deadline = selected, offer, offer.expires
+		search.quick = quick
+	end
+	self.quick = quick
+	self.panel.filter:ClearFocus()
+	self.panel.quickKeys:EnableKeyboard(true)
+	quick.ticker = C_Timer.NewTicker(0.15, function() self:AdvanceQuickSell() end)
+	if reuse then
+		self:GuardNativePost(quick, native)
+		self:PostQuickSell()
+	else
+		self:AdvanceQuickSell()
+	end
+	self:Refresh()
+end
+
 local function createList(panel, sales)
 	local list = CreateFrame("Frame", nil, panel, "BackdropTemplate")
 	paint(list, palette.row)
+	local header = fill(list, "BACKGROUND", palette.card)
+	header:SetPoint("TOPLEFT", 1, -1)
+	header:SetPoint("TOPRIGHT", -1, -1)
+	header:SetHeight(24)
 	list:SetPoint("TOPLEFT", 12, -114)
 	list:SetPoint("BOTTOMRIGHT", -12, 127)
 	panel.list = list
@@ -1747,47 +2139,33 @@ local function createList(panel, sales)
 	panel.columnQuantity = headerColumn(list, 86, "TOPRIGHT", -rowGutter - rowQuantityRight, "quantity", "RIGHT", sales)
 	panel.columnPrice = headerColumn(list, 94, "TOPRIGHT", -rowGutter - rowPriceRight, "price", "RIGHT", sales)
 
-	local scroll = CreateFrame("ScrollFrame", nil, list)
+	local scroll = CreateFrame("ScrollFrame", nil, list, "UIPanelScrollFrameTemplate")
+	scroll.scrollBarHideable = true
 	scroll:SetPoint("TOPLEFT", 1, -26)
 	scroll:SetPoint("BOTTOMRIGHT", -rowGutter, 1)
 	scroll:SetClipsChildren(true)
 	local content = CreateFrame("Frame", nil, scroll)
-	content:SetSize(panelWidth - 38, 1)
+	content:SetSize(panelWidth - 48, 1)
 	scroll:SetScrollChild(content)
 	panel.scroll, panel.content, panel.rows = scroll, content, {}
 
-	local bar = CreateFrame("Slider", nil, list)
-	bar:SetPoint("TOPRIGHT", -4, -30)
-	bar:SetPoint("BOTTOMRIGHT", -4, 5)
-	bar:SetWidth(6)
-	bar:SetOrientation("VERTICAL")
-	bar:SetMinMaxValues(0, 0)
-	bar:SetValue(0)
-	local track = fill(bar, "BACKGROUND", palette.border)
-	track:SetAllPoints()
-	bar:SetThumbTexture(white)
-	bar:GetThumbTexture():SetSize(6, 24)
-	bar:GetThumbTexture():SetVertexColor(unpack(palette.accent))
-	bar:SetScript("OnValueChanged", function(_, value)
-		scroll:SetVerticalScroll(value)
-		sales:QueueVisibleMarketNames()
-	end)
+	local bar = scroll.ScrollBar
+	bar:ClearAllPoints()
+	bar:SetPoint("TOPRIGHT", list, "TOPRIGHT", -3, -43)
+	bar:SetPoint("BOTTOMRIGHT", list, "BOTTOMRIGHT", -3, 18)
+	bar.scrollStep = rowHeight * 2
+	bar:HookScript("OnValueChanged", function() sales:QueueVisibleMarketNames() end)
 	bar:Hide()
 	panel.scrollBar = bar
 	scroll:SetScript("OnSizeChanged", function() updateScrollRange(panel) end)
 	scroll:EnableMouseWheel(true)
-	scroll:SetScript("OnMouseWheel", function(_, delta)
-		local _, maximum = bar:GetMinMaxValues()
-		bar:SetValue(math.max(0, math.min(maximum, bar:GetValue() - delta * rowHeight * 2)))
-	end)
 
 	panel.empty = label(list, "GameFontHighlight", 15, -45, palette.muted)
 	panel.empty:SetWidth(panelWidth - 62)
 end
 
 function Sales:BuildPriceHistory()
-	local frame = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
-	paint(frame, palette.row)
+	local frame = auctionWindow("EnhanceQoLAuctionSalesHistoryFrame", L["vendorAuctionHistory"])
 	frame:SetSize(panelWidth, historyHeight)
 	frame:SetFrameStrata("DIALOG")
 	frame:SetClampedToScreen(true)
@@ -1796,35 +2174,35 @@ function Sales:BuildPriceHistory()
 	frame.range = 7
 
 	local header = CreateFrame("Frame", nil, frame)
-	header:SetPoint("TOPLEFT", 1, -1)
-	header:SetPoint("TOPRIGHT", -1, -1)
-	header:SetHeight(46)
-	fill(header, "BACKGROUND", palette.card):SetAllPoints()
+	header:SetPoint("TOPLEFT", 10, -23)
+	header:SetPoint("TOPRIGHT", -10, -23)
+	header:SetHeight(44)
+	frame:RegisterForDrag("LeftButton")
 	header:EnableMouse(true)
 	header:RegisterForDrag("LeftButton")
-	header:SetScript("OnDragStart", function()
+	local function startMoving()
 		frame.detached, frame.dragging = true, true
 		frame:StartMoving()
 		self:RestoreHistoryDock()
-	end)
+	end
+	frame:SetScript("OnDragStart", startMoving)
+	header:SetScript("OnDragStart", startMoving)
 	local function stopMoving()
 		if not frame.dragging then return end
 		frame:StopMovingOrSizing()
 		frame.dragging = nil
 	end
 	header:SetScript("OnDragStop", stopMoving)
+	frame:SetScript("OnDragStop", stopMoving)
 	frame:SetScript("OnHide", function()
 		stopMoving()
 		self:RestoreHistoryDock()
 	end)
-	local close = button(header, "×", 24, function() frame:Hide() end)
-	close:GetFontString():SetFontObject(GameFontHighlight)
-	close:SetPoint("RIGHT", -10, 0)
 	frame.header = header
 
 	local icon = CreateFrame("Frame", nil, header, "BackdropTemplate")
 	icon:SetSize(34, 34)
-	icon:SetPoint("LEFT", 10, 0)
+	icon:SetPoint("LEFT", 5, 0)
 	paint(icon, palette.panel)
 	icon.texture = icon:CreateTexture(nil, "ARTWORK")
 	icon.texture:SetPoint("TOPLEFT", 2, -2)
@@ -1839,24 +2217,30 @@ function Sales:BuildPriceHistory()
 	local function priceCard(text, point, offset, color)
 		local card = CreateFrame("Frame", nil, frame, "BackdropTemplate")
 		card:SetSize(195, 64)
-		card:SetPoint(point, offset, -53)
+		card:SetPoint(point, offset, -74)
 		paint(card, palette.card)
 		local heading = label(card, "GameFontHighlight", 10, -6, palette.muted)
-		heading:SetWidth(175)
+		heading:SetWidth(174)
+		heading:SetWordWrap(false)
 		heading:SetText(text)
 		local value = label(card, "GameFontHighlightLarge", 10, -21, color)
+		value:SetWidth(174)
+		value:SetWordWrap(false)
 		local detail = label(card, "GameFontHighlight", 10, -44, palette.muted)
+		detail:SetWidth(174)
+		detail:SetWordWrap(false)
 		return value, detail
 	end
 	frame.latest, frame.scanTime = priceCard(L["vendorAuctionHistoryLatest"], "TOPLEFT", 10)
 	frame.average, frame.coverage = priceCard(L["vendorAuctionHistoryAverage"], "TOPRIGHT", -10, palette.accent)
-	local description = label(frame, "GameFontHighlight", 10, -124, palette.muted)
-	description:SetWidth(400)
+	local description = label(frame, "GameFontHighlight", 11, -145, palette.muted)
+	description:SetWidth(panelWidth - 26)
+	description:SetMaxLines(2)
 	description:SetText(L["vendorAuctionHistoryDescription"])
 
 	local plot = CreateFrame("Frame", nil, frame)
-	plot:SetPoint("TOPLEFT", 105, -146)
-	plot:SetSize(298, 85)
+	plot:SetPoint("TOPLEFT", 111, -173)
+	plot:SetSize(286, 76)
 	local backdrop = fill(plot, "BACKGROUND", palette.card)
 	backdrop:SetPoint("TOPLEFT", -4, 4)
 	backdrop:SetPoint("BOTTOMRIGHT", 4, -4)
@@ -1867,8 +2251,12 @@ function Sales:BuildPriceHistory()
 		guide:SetHeight(1)
 	end
 	frame.plot = plot
-	frame.high = label(frame, "GameFontHighlight", 10, -141, palette.muted)
-	frame.low = label(frame, "GameFontHighlight", 10, -224, palette.muted)
+	frame.high = label(frame, "GameFontHighlightSmall", 14, -173, palette.muted)
+	frame.low = label(frame, "GameFontHighlightSmall", 14, -239, palette.muted)
+	for _, axis in ipairs({ frame.high, frame.low }) do
+		axis:SetWidth(90)
+		axis:SetWordWrap(false)
+	end
 	frame.first = label(plot, "GameFontHighlight", 0, 0, palette.muted)
 	frame.first:ClearAllPoints()
 	frame.first:SetPoint("TOPLEFT", plot, "BOTTOMLEFT", 0, -8)
@@ -1888,7 +2276,7 @@ function Sales:BuildPriceHistory()
 		end)
 		control:GetFontString():SetFontObject(GameFontHighlight)
 		control:SetHeight(22)
-		control:SetPoint("BOTTOM", (index - 1.5) * 91, 6)
+		control:SetPoint("BOTTOM", (index - 1.5) * 91, 10)
 		frame.ranges[range] = control
 	end
 	frame:Hide()
@@ -1903,9 +2291,8 @@ function Sales:RestoreHistoryDock()
 		panel:SetPoint(unpack(panel.historyAnchor, 1, 5))
 		panel.historyAnchor = nil
 	end
-	if panel:GetHeight() ~= panelHeight then
-		panel:SetHeight(panelHeight)
-	end
+	local height = panel.baseHeight or panelHeight
+	if panel:GetHeight() ~= height then panel:SetHeight(height) end
 end
 
 function Sales:DockPriceHistory()
@@ -1923,7 +2310,7 @@ function Sales:DockPriceHistory()
 	frame:ClearAllPoints()
 	local available = screenHeight - historyHeight - 3 * historyGap
 	if anchor == self.panel and available >= minimumPanelHeight then
-		anchor:SetHeight(math.min(panelHeight, available))
+		anchor:SetHeight(math.min(anchor.baseHeight or panelHeight, available))
 		local top = anchor:GetTop()
 		local requiredTop = anchor:GetHeight() + historyHeight + 2 * historyGap
 		if top and top < requiredTop then
@@ -1987,8 +2374,8 @@ function Sales:RefreshPriceHistory()
 	frame.scanTime:SetText(itemID and data.scannedAt and self:FormatPriceDate(data.scannedAt) or "")
 	frame.average:SetText(historyMoney(data.average))
 	frame.coverage:SetText(itemID and L["vendorAuctionHistoryCoverage"]:format(data.observed) or "")
-	for range, tabButton in pairs(frame.ranges) do
-		paint(tabButton, range == frame.range and palette.selected or palette.card)
+	for range, button in pairs(frame.ranges) do
+		button:SetEnabled(range ~= frame.range)
 	end
 
 	local firstDay = data.today - frame.range + 1
@@ -2001,7 +2388,7 @@ function Sales:RefreshPriceHistory()
 		low = math.min(low or point.price, point.price)
 		high = math.max(high or point.price, point.price)
 	end
-	frame.high:SetPoint("TOPLEFT", 10, low == high and -182 or -141)
+	frame.high:SetPoint("TOPLEFT", 14, low == high and -205 or -173)
 	frame.high:SetText(high and historyMoney(high) or "")
 	frame.low:SetText(low ~= high and historyMoney(low) or "")
 	for _, marker in ipairs(frame.markers) do marker:Hide() end
@@ -2023,7 +2410,7 @@ function Sales:RefreshPriceHistory()
 				GameTooltip:SetOwner(buttonFrame, "ANCHOR_TOP")
 				GameTooltip:SetText(historyDate(buttonFrame.point.day))
 				GameTooltip:AddLine(historyMoney(buttonFrame.point.price))
-				GameTooltip:AddLine(L["vendorAuctionHistoryScans"]:format(buttonFrame.point.scans), unpack(palette.muted))
+				GameTooltip:AddLine(L["vendorAuctionHistoryScans"]:format(buttonFrame.point.scans), palette.muted[1], palette.muted[2], palette.muted[3])
 				GameTooltip:Show()
 			end)
 			local function hideTooltip(buttonFrame)
@@ -2097,8 +2484,7 @@ function Sales:RegisterPostPriceHistory(frame)
 end
 
 function Sales:BuildPanel()
-	local panel = CreateFrame("Frame", "EnhanceQoLAuctionSalesFrame", UIParent, "BackdropTemplate")
-	paint(panel, palette.panel)
+	local panel = auctionWindow("EnhanceQoLAuctionSalesFrame", L["vendorAuctionSales"])
 	panel:SetFrameStrata("DIALOG")
 	panel:SetSize(panelWidth, panelHeight)
 	panel:SetClampedToScreen(true)
@@ -2112,6 +2498,7 @@ function Sales:BuildPanel()
 		for _, event in ipairs(bagEvents) do self.events:UnregisterEvent(event) end
 		self.events:UnregisterEvent("CURSOR_CHANGED")
 		self:UpdateWatchDropHint()
+		self:StopQuickSell()
 		self.search, self.status = nil, nil
 		self.pendingWatchFind = nil
 		self.marketCatalog = nil
@@ -2125,11 +2512,9 @@ function Sales:BuildPanel()
 	self.panel = panel
 
 	local header = CreateFrame("Frame", nil, panel)
-	header:SetPoint("TOPLEFT", 1, -1)
-	header:SetPoint("TOPRIGHT", -1, -1)
-	header:SetHeight(40)
-	local surface = fill(header, "BACKGROUND", palette.card)
-	surface:SetAllPoints()
+	header:SetPoint("TOPLEFT", 20, 0)
+	header:SetPoint("TOPRIGHT", -26, 0)
+	header:SetHeight(20)
 	header:EnableMouse(true)
 	header:RegisterForDrag("LeftButton")
 	header:SetScript("OnDragStart", function()
@@ -2141,17 +2526,24 @@ function Sales:BuildPanel()
 		panel.moved = true
 		self:DockPriceHistory()
 	end)
-	local title = label(header, "GameFontHighlightLarge", 12, -11)
-	title:SetWidth(208)
-	title:SetWordWrap(false)
-	title:SetText(L["vendorAuctionSales"])
-	local scanButton = button(header, L["vendorAuctionScan"], 128, function(control) self:ChooseFullScan(control) end)
-	scanButton:SetPoint("RIGHT", -70, 0)
+	local scanButton = CreateFrame("Button", nil, panel)
+	scanButton:SetSize(22, 22)
+	scanButton:SetPoint("TOPRIGHT", -43, -26)
+	scanButton:SetScript("OnClick", function(control) self:ChooseFullScan(control) end)
+	local magnifier = scanButton:CreateTexture(nil, "ARTWORK")
+	magnifier:SetAtlas("common-search-magnifyingglass")
+	magnifier:SetSize(15, 15)
+	magnifier:SetPoint("CENTER")
+	magnifier:SetVertexColor(0.8, 0.8, 0.8)
+	local scanHover = scanButton:CreateTexture(nil, "HIGHLIGHT")
+	scanHover:SetAtlas("common-search-magnifyingglass")
+	scanHover:SetAllPoints(magnifier)
+	scanHover:SetBlendMode("ADD")
 	panel.scanButton = scanButton
 	scanButton:SetScript("OnEnter", function(control) self:ShowScanTooltip(control) end)
 	scanButton:SetScript("OnLeave", function(control) if GameTooltip:IsOwned(control) then GameTooltip:Hide() end end)
 
-	local scanBar = CreateFrame("StatusBar", nil, header)
+	local scanBar = CreateFrame("StatusBar", nil, panel)
 	scanBar:SetPoint("TOPLEFT", scanButton, "BOTTOMLEFT", 0, -1)
 	scanBar:SetPoint("TOPRIGHT", scanButton, "BOTTOMRIGHT", 0, -1)
 	scanBar:SetHeight(4)
@@ -2163,23 +2555,27 @@ function Sales:BuildPanel()
 	local pulse = CreateFrame("Frame", nil, scanBar)
 	pulse:SetAllPoints()
 	local segment = fill(pulse, "ARTWORK", palette.accent)
-	segment:SetSize(30, 4)
+	segment:SetSize(8, 4)
 	segment:SetPoint("LEFT")
 	pulse:SetScript("OnUpdate", function(frame, elapsed)
 		frame.phase = ((frame.phase or 0) + elapsed) % 1.6
-		local offset = (scanBar:GetWidth() - 30) * (1 - math.abs(frame.phase / 0.8 - 1))
+		local offset = (scanBar:GetWidth() - 8) * (1 - math.abs(frame.phase / 0.8 - 1))
 		segment:SetPoint("LEFT", offset, 0)
 	end)
 	scanBar.pulse = pulse
 	panel.scanBar = scanBar
 	self:UpdateScanDisplay()
-	local close = button(header, "×", 24, function() panel:Hide() end)
-	close:SetPoint("RIGHT", -10, 0)
-	local settings = CreateFrame("Button", nil, header)
+	local settings = CreateFrame("Button", nil, panel)
 	settings:SetSize(22, 22)
-	settings:SetPoint("RIGHT", close, "LEFT", -3, 0)
-	settings:SetNormalTexture("Interface\\Buttons\\UI-OptionsButton")
-	settings:SetHighlightTexture("Interface\\Buttons\\UI-OptionsButton", "ADD")
+	settings:SetPoint("LEFT", scanButton, "RIGHT", 5, 0)
+	local settingsIcon = settings:CreateTexture(nil, "ARTWORK")
+	settingsIcon:SetAtlas("QuestLog-icon-setting")
+	settingsIcon:SetSize(19, 19)
+	settingsIcon:SetPoint("CENTER")
+	local settingsHover = settings:CreateTexture(nil, "HIGHLIGHT")
+	settingsHover:SetAtlas("QuestLog-icon-setting")
+	settingsHover:SetAllPoints(settingsIcon)
+	settingsHover:SetBlendMode("ADD")
 	settings:SetScript("OnClick", function()
 		if addon.functions.OpenConfigCenter then addon.functions.OpenConfigCenter("economy.auction-crafting", "vendorAuctionSales") end
 	end)
@@ -2191,60 +2587,95 @@ function Sales:BuildPanel()
 	settings:SetScript("OnLeave", GameTooltip_Hide)
 	panel.settingsButton = settings
 
-	local sell = tab(panel, _G.AUCTION_HOUSE_FRAME_TITLE_SELL, function() self:SetMode("sell") end)
-	sell:SetPoint("TOPLEFT", 12, -47)
-	local watch = tab(panel, L["vendorAuctionWatch"], function() self:SetMode("watch") end)
+	local actions = CreateFrame("Frame", nil, panel)
+	actions:SetHeight(26)
+	actions:SetPoint("BOTTOMLEFT", 13, 12)
+	actions:SetPoint("BOTTOMRIGHT", -13, 12)
+	panel.sellActions = actions
+	panel.quickButton = button(actions, L["vendorAuctionQuickSell"], 126, function()
+		if self.quick then self:PostQuickSell() else self:StartQuickSell() end
+	end)
+	panel.quickButton:SetPoint("RIGHT")
+	panel.quickButton:SetScript("OnEnter", function(control)
+		GameTooltip:SetOwner(control, "ANCHOR_TOP")
+		GameTooltip:SetText(L["vendorAuctionQuickTooltip"], 1, 1, 1, 1, true)
+		GameTooltip:Show()
+	end)
+	panel.quickButton:SetScript("OnLeave", GameTooltip_Hide)
+	panel.quickStop = button(actions, CANCEL, 88, function() self:StopQuickSell() end)
+	panel.quickStop:SetPoint("LEFT")
+	panel.quickSkip = button(actions, L["vendorAuctionQuickSkip"], 108, function() self:SkipQuickSell() end)
+	panel.quickSkip:SetPoint("RIGHT", panel.quickButton, "LEFT", -6, 0)
+	panel.sellOne = button(actions, L["vendorAuctionQuickSingle"], 128, function() self:StartQuickSell(self.selected) end)
+	panel.sellOne:SetPoint("RIGHT", panel.quickButton, "LEFT", -6, 0)
+	panel.quickKeys = CreateFrame("Frame", nil, panel)
+	panel.quickKeys:SetScript("OnKeyDown", function(keys, key)
+		local active = self.quick and not InCombatLockdown() and not GetCurrentKeyBoardFocus() and not nativeDialogOpen()
+		local handle = active and not IsModifierKeyDown() and (key == "SPACE" or key == "ESCAPE")
+		keys:SetPropagateKeyboardInput(not handle)
+		if not handle then return end
+		if key == "ESCAPE" then
+			self:StopQuickSell()
+		elseif not keys.spaceDown then
+			keys.spaceDown = true
+			self:PostQuickSell()
+		end
+	end)
+	panel.quickKeys:SetScript("OnKeyUp", function(keys, key)
+		if key == "SPACE" then keys.spaceDown = nil end
+	end)
+
+	local sell = tab(panel, _G.AUCTION_HOUSE_FRAME_TITLE_SELL, 107, function() self:SetMode("sell") end)
+	sell:SetPoint("TOPLEFT", 14, -52)
+	local watch = tab(panel, L["vendorAuctionWatch"], 132, function() self:SetMode("watch") end)
 	watch:SetPoint("LEFT", sell, "RIGHT", 6, 0)
-	local market = tab(panel, L["vendorAuctionMarket"], function()
+	local market = tab(panel, L["vendorAuctionMarket"], 96, function()
 		self:SetMode("market")
 		panel.filter:SetFocus()
 	end)
 	market:SetPoint("LEFT", watch, "RIGHT", 6, 0)
-	for _, control in ipairs({ sell, watch, market }) do control:SetWidth(115) end
-	local more = tab(panel, "...", function(control)
+	local more = tab(panel, "...", 36, function(control)
 		if not _G.MenuUtil then return end
 		_G.MenuUtil.CreateContextMenu(control, function(_, root)
 			root:CreateButton(L["vendorAuctionExcluded"], function() self:SetMode("excluded") end)
+			local advanced = root:CreateButton(L["vendorAuctionQuickFloor"])
+			advanced:SetTooltip(function(tooltip) tooltip:AddLine(L["vendorAuctionQuickFloorTooltip"], 1, 1, 1, true) end)
+			for _, percent in ipairs({ 0, 70, 80, 90, 100, 110, 125 }) do
+				advanced:CreateRadio(percent == 0 and _G.OFF or ("%d%%"):format(percent), function()
+					return (vendorDB().quickSellFloor or 0) == percent
+				end, function()
+					self:StopQuickSell()
+					vendorDB().quickSellFloor = percent ~= 0 and percent or nil
+					if self.search then self.search.offer = nil end
+					self:Refresh()
+				end)
+			end
 		end)
 	end)
-	more:SetWidth(33)
-	more:SetPoint("TOPRIGHT", -12, -47)
+	more:SetPoint("TOPRIGHT", -14, -52)
 	panel.sellTab, panel.watchTab, panel.marketTab, panel.more = sell, watch, market, more
 	watch:SetScript("OnReceiveDrag", function() self:ReceiveWatchItem() end)
-	local badge = CreateFrame("Frame", nil, watch, "BackdropTemplate")
-	paint(badge, palette.ready, palette.good)
-	badge:SetSize(20, 18)
-	badge:SetPoint("RIGHT", -5, 0)
-	badge.text = badge:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	badge.text:SetPoint("CENTER")
-	badge.text:SetTextColor(unpack(palette.good))
-	badge:Hide()
-	watch.badge = badge
 	watch:SetScript("OnEnter", function(control)
 		if not control.readyCount or control.readyCount == 0 then return end
 		GameTooltip:SetOwner(control, "ANCHOR_TOP")
 		GameTooltip:SetText(L["vendorAuctionWatchReadyCount"]:format(control.readyCount))
 		GameTooltip:Show()
 	end)
-	watch:SetScript("OnLeave", function(control) if GameTooltip:IsOwned(control) then GameTooltip:Hide() end end)
+	watch:SetScript("OnLeave", function(control)
+		if GameTooltip:IsOwned(control) then GameTooltip:Hide() end
+	end)
 
-	local filter = CreateFrame("EditBox", nil, panel, "BackdropTemplate")
-	paint(filter, palette.panel)
-	filter:SetPoint("TOPLEFT", 12, -80)
-	filter:SetPoint("TOPRIGHT", -12, -80)
-	filter:SetHeight(26)
+	local filter = CreateFrame("EditBox", nil, panel, "SearchBoxTemplate")
+	filter:SetPoint("TOPLEFT", 18, -82)
+	filter:SetPoint("TOPRIGHT", -16, -82)
+	filter:SetHeight(24)
 	filter:SetAutoFocus(false)
-	filter:SetFontObject(GameFontHighlightSmall)
-	filter:SetTextInsets(8, 8, 0, 0)
-	filter:SetScript("OnEscapePressed", function(box) box:ClearFocus() end)
-	filter:SetScript("OnEnterPressed", function(box) box:ClearFocus() end)
-	panel.placeholder = label(filter, "GameFontHighlightSmall", 8, -7, palette.muted)
-	panel.placeholder:SetText(_G.SEARCH)
-	filter:SetScript("OnTextChanged", function(box, userInput)
+	filter:HookScript("OnEnterPressed", function(box) box:ClearFocus() end)
+	filter:HookScript("OnTextChanged", function(box)
 		local value = box:GetText()
-		panel.placeholder:SetShown(value == "")
-		if not userInput then return end
+		if not self.mode or value == (self.filters[self.mode] or "") then return end
 		self.filters[self.mode] = value
+		self:StopQuickSell()
 		if self.mode == "market" then self.marketPage = 1 end
 		panel.scrollBar:SetValue(0)
 		self:Refresh()
@@ -2273,14 +2704,11 @@ function Sales:BuildPanel()
 	panel.marketPage = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 	panel.marketPage:SetPoint("TOPRIGHT", -40, -117)
 	panel.marketPage:SetWidth(50)
-	local buySearch = button(panel, L["vendorAuctionWatchBuySearch"], 130, function() self:SearchWatchedItem() end, true)
-	buySearch:SetPoint("TOPRIGHT", -12, -80)
-	panel.buySearch = buySearch
-	panel.addWatch = tab(panel, _G.ADD, function()
+	panel.addWatch = button(panel, _G.ADD, 82, function()
 		self:ResetWatchEditor(true)
 		panel.input:SetFocus()
 	end)
-	panel.addWatch:SetWidth(82)
+	panel.addWatch:SetPoint("TOPRIGHT", -14, -82)
 	createList(panel, self)
 	local function receiveItem()
 		if self.mode == "watch" then self:ReceiveWatchItem() end
@@ -2331,14 +2759,6 @@ function Sales:BuildPanel()
 		text:SetTextColor(unpack(index == 1 and palette.text or palette.muted))
 		panel[field] = text
 	end
-	panel.track = button(detailCard, L["vendorAuctionWatchAdd"], 186, function()
-		local selected = self.selected
-		if selected then
-			local price = readQuote(self.live, priceKey(selected.key), liveLifetime)
-			self:EditWatch(selected.key, selected.link, price)
-		end
-	end)
-	panel.track:SetPoint("BOTTOMRIGHT", -8, 8)
 	panel.historyButton = button(detailCard, L["vendorAuctionHistory"], 150, function() self:OpenPriceHistory() end)
 	panel.historyButton:SetPoint("BOTTOMLEFT", 8, 8)
 	panel.restore = button(detailCard, REMOVE, 95, function()
@@ -2427,6 +2847,16 @@ function Sales:BuildPanel()
 	panel.watchDrop = watchDropHighlight(panel.list, receiveItem)
 end
 
+function Sales:SelectWatchEntry(item)
+	local panel = self.panel
+	self.watchAdding = nil
+	if self.pendingWatchFind and self.pendingWatchFind.entry ~= item then self.pendingWatchFind = nil end
+	self.watchKey, self.watchExact, self.watchLink, self.status = item.key, item.exact, item.link, nil
+	panel.input:SetText("")
+	panel.amount:SetText(item.quantity and tostring(item.quantity) or "")
+	_G.MoneyInputFrame_SetCopper(panel.money, item.limit or 0)
+end
+
 function Sales:ResetWatchEditor(adding)
 	local panel = self.panel
 	self.watchAdding = adding
@@ -2483,6 +2913,7 @@ function Sales:SetExcluded(entry, exclude)
 	local itemID = entry.key.itemID
 	local list = excludedItems(exclude)
 	if exclude then
+		self:StopQuickSell()
 		list[itemID] = { key = entry.key, link = entry.link, icon = entry.icon, quality = entry.quality }
 		if self.selected and self.selected.key.itemID == itemID then
 			local location = ItemLocation:CreateFromBagAndSlot(self.selected.bag, self.selected.slot)
@@ -2533,6 +2964,7 @@ function Sales:RegisterWatchMenu()
 end
 
 function Sales:SetMode(mode)
+	self:StopQuickSell()
 	self.mode, self.search, self.status = mode, nil, nil
 	self.pendingWatchFind = nil
 	self.panel.filter:SetText(self.filters[mode] or "")
@@ -2559,7 +2991,7 @@ function Sales:Refresh(rebuild)
 		self.selected = nil
 	end
 
-	local items, missingNames = self.bags
+	local items, missingNames = selling and groupBagRows(self.bags) or self.bags
 	if browsing then
 		items, missingNames = self:GetScannedItems(market, filter, self.marketCategory, self.marketQuality)
 	elseif not selling then
@@ -2592,13 +3024,18 @@ function Sales:Refresh(rebuild)
 		first = (self.marketPage - 1) * marketPageSize
 	end
 	local visible = browsing and math.min(marketPageSize, #items - first) or #items
+	local watchSearchAvailable = watching and self.open == true
+	local rowOffer = self.quick and self.quick.offer or (not self.quick and self.search and self.search.offer)
+	if rowOffer and (not rowOffer.price or rowOffer.expires <= GetTime()) then rowOffer = nil end
+	local offerKey = rowOffer and self.selected and priceKey(self.selected.key)
+	local columnInset = watchSearchAvailable and watchActionInset or 0
 	for index = 1, visible do
 		local result = items[first + index]
 		local entry = result.row
 		local row = panel.rows[index]
 		if not row then
 			row = CreateFrame("Button", nil, panel.content)
-			row:SetSize(panelWidth - 38, rowHeight)
+			row:SetSize(panelWidth - 48, rowHeight)
 			row:SetPoint("TOPLEFT", 0, -(index - 1) * rowHeight)
 			row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 			row:SetScript("OnReceiveDrag", function()
@@ -2611,7 +3048,7 @@ function Sales:Refresh(rebuild)
 						self:OpenExclusionMenu(control, item, true)
 					else
 						self.status = nil
-						self:SelectBag(item)
+						self:SelectBag(item.stacks[1])
 					end
 				elseif self.mode == "market" then
 					if mouseButton == "RightButton" then return end
@@ -2630,12 +3067,7 @@ function Sales:Refresh(rebuild)
 						self:Refresh()
 					end
 				elseif not self:ReceiveWatchItem() then
-					self.watchAdding = nil
-					if self.pendingWatchFind and self.pendingWatchFind.entry ~= item then self.pendingWatchFind = nil end
-					self.watchKey, self.watchExact, self.watchLink, self.status = item.key, item.exact, item.link, nil
-					panel.input:SetText("")
-					panel.amount:SetText(item.quantity and tostring(item.quantity) or "")
-					_G.MoneyInputFrame_SetCopper(panel.money, item.limit or 0)
+					self:SelectWatchEntry(item)
 					self:Refresh()
 				end
 			end)
@@ -2652,6 +3084,10 @@ function Sales:Refresh(rebuild)
 			row.icon:SetSize(24, 24)
 			row.icon:SetPoint("LEFT", 10, 0)
 			row.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+			row.vendorWarning = row:CreateTexture(nil, "OVERLAY")
+			row.vendorWarning:SetTexture("Interface\\DialogFrame\\UI-Dialog-Icon-AlertNew")
+			row.vendorWarning:SetSize(15, 15)
+			row.vendorWarning:SetPoint("BOTTOMRIGHT", row.icon, "BOTTOMRIGHT", 3, -2)
 			row.name = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
 			row.name:SetPoint("LEFT", rowNameLeft, 0)
 			row.name:SetJustifyH("LEFT")
@@ -2666,9 +3102,17 @@ function Sales:Refresh(rebuild)
 			row.available:SetPoint("BOTTOMRIGHT", -rowPriceRight, 4)
 			row.available:SetText(L["vendorAuctionWatchBuyable"])
 			row.available:SetTextColor(unpack(palette.good))
+			row.find = button(row, L["vendorAuctionWatchBuySearch"], watchActionWidth, function()
+				if self.mode ~= "watch" or not self.open then return end
+				self:SelectWatchEntry(row.entry)
+				self:SearchWatchedItem()
+			end)
+			row.find:SetHeight(22)
+			row.find:SetPoint("RIGHT", -6, 0)
 			row:SetScript("OnEnter", function(control)
 				GameTooltip:SetOwner(control, "ANCHOR_RIGHT")
 				if control.entry.link then GameTooltip:SetHyperlink(control.entry.link) else GameTooltip:SetItemByID(control.entry.key.itemID) end
+				if control.vendorNotice then GameTooltip:AddLine(control.vendorNotice, palette.warning[1], palette.warning[2], palette.warning[3], true) end
 				GameTooltip:Show()
 			end)
 			row:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -2676,19 +3120,26 @@ function Sales:Refresh(rebuild)
 		end
 		row.entry = selling and entry or entry.entry
 		local reached = watching and entry.ready
+		row.find:SetShown(watchSearchAvailable)
 		row.available:SetShown(reached and true or false)
-		row.price:SetPoint("RIGHT", -rowPriceRight, reached and 6 or 0)
+		row.available:SetPoint("BOTTOMRIGHT", -rowPriceRight - columnInset, 4)
+		row.count:SetPoint("RIGHT", -rowQuantityRight - columnInset, 0)
+		row.price:SetPoint("RIGHT", -rowPriceRight - columnInset, reached and 6 or 0)
 		local highlight
+		row.vendorNotice = nil
 		if selling then
-			local price = self:GetListingPrice(entry.key)
+			local price = offerKey == priceKey(entry.key) and rowOffer.price or self:GetListingPrice(entry.key)
+			local vendor = vendorUnitPrice(entry.link)
+			local belowVendor = price and vendor and price < vendor
+			if belowVendor then row.vendorNotice = L["vendorAuctionQuickBelowVendor"]:format(coinText(price), coinText(vendor)) end
 			row.name:SetWidth(195)
 			row.name:SetText(itemLabel(entry.link, entry.key))
 			paintItem(row.name, entry.quality)
 			row.icon:SetTexture(entry.icon)
 			row.count:SetText(entry.count)
-			row.price:SetTextColor(unpack(price and palette.text or palette.dim))
+			row.price:SetTextColor(unpack(belowVendor and palette.warning or price and palette.text or palette.dim))
 			row.price:SetText(price and coinText(price) or "—")
-			highlight = self.selected and self.selected.guid == entry.guid
+			highlight = self.selected and priceKey(self.selected.key) == priceKey(entry.key)
 		elseif browsing then
 			local item = entry.entry
 			row.name:SetWidth(152)
@@ -2702,7 +3153,7 @@ function Sales:Refresh(rebuild)
 			if highlight then self.marketSelection = item end
 		else
 			local item = entry.entry
-			row.name:SetWidth(watching and 195 or 320)
+			row.name:SetWidth(watchSearchAvailable and 112 or watching and 195 or 320)
 			row.name:SetText(itemLabel(item.link, item.key, entry.name))
 			paintItem(row.name, item.quality or (entry.info and entry.info.quality))
 			row.icon:SetTexture(item.icon or (entry.info and entry.info.iconFileID) or C_Item.GetItemIconByID(item.key.itemID))
@@ -2717,6 +3168,7 @@ function Sales:Refresh(rebuild)
 				highlight = self.excludedSelection == item
 			end
 		end
+		row.vendorWarning:SetShown(row.vendorNotice ~= nil)
 		row.marker:SetShown(highlight or reached or false)
 		row.marker:SetColorTexture(unpack(reached and palette.good or palette.accent))
 		row.bg:SetColorTexture(unpack(highlight and palette.selected or reached and palette.ready or (index % 2 == 0 and palette.alternate or palette.row)))
@@ -2725,15 +3177,26 @@ function Sales:Refresh(rebuild)
 	for index = visible + 1, #panel.rows do panel.rows[index]:Hide() end
 	local selected = selling and self.selected or (browsing and self.marketSelection) or (excluding and self.excludedSelection) or nil
 	local hasWatchItem = watching and self.watchKey ~= nil
-	panel.detailCard:SetShown(watching or selected ~= nil)
+	local sellStatus = selling and (self.quick or self.status) or nil
+	panel.detailCard:SetShown(watching or selected ~= nil or sellStatus ~= nil)
 	panel.list:SetPoint("TOPLEFT", 12, browsing and -142 or -114)
-	panel.list:SetPoint("BOTTOMRIGHT", -12, watching and (hasWatchItem and 180 or 198) or (selected and (browsing and 118 or 127) or 12))
+	local actionsVisible = selling and self.open == true
+	local footerInset = panel.footerButton and 29 or 0
+	local bottomInset = footerInset + (actionsVisible and 30 or 0)
+	panel.sellActions:SetShown(actionsVisible)
+	panel.sellActions:SetPoint("BOTTOMLEFT", 13, 12 + footerInset)
+	panel.sellActions:SetPoint("BOTTOMRIGHT", -13, 12 + footerInset)
+	panel.detailCard:SetPoint("BOTTOMRIGHT", -12, 12 + bottomInset)
+	panel.list:SetPoint("BOTTOMRIGHT", -12, bottomInset
+		+ (watching and (hasWatchItem and 180 or 198) or ((selected or sellStatus) and (browsing and 118 or 127) or 12)))
 	panel.content:SetHeight(math.max(1, visible * rowHeight))
 	updateScrollRange(panel)
 	panel.columnQuantity:SetShown(not excluding)
 	panel.columnPrice:SetShown(not excluding)
+	panel.columnQuantity:SetPoint("TOPRIGHT", -rowGutter - rowQuantityRight - columnInset, -1)
+	panel.columnPrice:SetPoint("TOPRIGHT", -rowGutter - rowPriceRight - columnInset, -1)
 	showSort(panel.columnItem, _G.AUCTION_HOUSE_HEADER_ITEM or L["vendorAuctionItemID"], "name", sorting)
-	showSort(panel.columnQuantity, (browsing and L["vendorAuctionMarketLatest"]) or (watching and L["vendorAuctionWatchWanted"]) or (_G.QUANTITY or L["Stack size"]), "quantity", sorting)
+	showSort(panel.columnQuantity, (browsing and L["vendorAuctionMarketLatest"]) or (watching and L["vendorAuctionWatchWanted"]) or (_G.AUCTION_HOUSE_QUANTITY_LABEL or L["Amount"]), "quantity", sorting)
 	showSort(panel.columnPrice, (browsing and L["vendorAuctionHistoryAverage"]) or (selling and _G.AUCTION_HOUSE_HEADER_UNIT_PRICE) or L["vendorAuctionTarget"], "price", sorting)
 	panel.empty:SetShown(#items == 0)
 	panel.empty:SetText((catalog and self.marketQuality ~= nil and catalog.missingQuality and L["vendorAuctionMarketUnknownQuality"])
@@ -2745,8 +3208,11 @@ function Sales:Refresh(rebuild)
 	local key = selected and selected.key or (watching and self.watchKey)
 	local search = self.search
 	local quote = (selling or watching) and formatQuote(key) or ""
+	if selling and rowOffer then
+		quote = (_G.AUCTION_HOUSE_HEADER_UNIT_PRICE or L["Amount"]) .. "  " .. coinText(rowOffer.price)
+	end
 	local detail = (browsing and selected and selected.name) or (key and itemLabel(selected and selected.link or (watching and self.watchLink), key))
-	local status = self.status or (selling and search and search.status)
+	local status = self.status or (selling and search and ((not self.quick and search.offer and search.offer.message) or search.status))
 	if browsing and selected and selected.scannedAt then status = self:FormatPriceDate(selected.scannedAt) end
 	if watching and not status and key then
 		local result = self.watchResults[priceKey(key)]
@@ -2772,13 +3238,22 @@ function Sales:Refresh(rebuild)
 	self:UpdateWatchTotals()
 	panel.quote:SetText(quote)
 	panel.status:SetText(status or "")
+	panel.status:SetWidth(selling and 325 or 184)
+	panel.quickButton:SetShown(selling and self.open == true)
+	panel.quickButton:SetText(L[self.quick and "vendorAuctionQuickPost" or "vendorAuctionQuickSell"])
+	panel.quickButton:SetEnabled(not self.quickPost and (self.quick and self.quick.offer ~= nil or not self.quick and #items > 0))
+	panel.quickStop:SetShown(selling and self.quick ~= nil)
+	panel.quickSkip:SetShown(selling and self.quick ~= nil)
+	panel.quickSkip:SetEnabled(self.quick and self.quick.row ~= nil and not self.quickPost or false)
+	panel.sellOne:SetShown(selling and self.open == true and not self.quick and selected ~= nil)
+	panel.sellOne:SetEnabled(not self.quickPost)
 	selectTab(panel.sellTab, selling)
 	selectTab(panel.watchTab, watching)
 	selectTab(panel.marketTab, browsing)
 	selectTab(panel.more, excluding)
-	self:UpdateWatchBadge()
-	panel.filter:SetPoint("TOPRIGHT", (browsing and -145) or (watching and (self.open and -236 or -99)) or -12, -80)
-	panel.placeholder:SetText(browsing and L["vendorAuctionMarketSearch"] or _G.SEARCH)
+	self:UpdateWatchTab()
+	panel.filter:SetPoint("TOPRIGHT", (browsing and -146) or (watching and -104) or -16, -82)
+	if panel.filter.Instructions then panel.filter.Instructions:SetText(browsing and L["vendorAuctionMarketSearch"] or _G.SEARCH) end
 	panel.marketButton:SetText(browsingMarketLabel(market))
 	panel.marketButton:SetShown(browsing)
 	panel.marketCategory:SetText(self.marketCategory and self.marketCategory.name or L["vendorAuctionMarketAllCategories"])
@@ -2793,15 +3268,8 @@ function Sales:Refresh(rebuild)
 		panel.marketNext:SetEnabled(self.marketPage < pages)
 		panel.marketPage:SetText(("%d / %d"):format(self.marketPage, pages))
 	end
-	panel.addWatch:ClearAllPoints()
-	if self.open then
-		panel.addWatch:SetPoint("RIGHT", panel.buySearch, "LEFT", -5, 0)
-	else
-		panel.addWatch:SetPoint("TOPRIGHT", -12, -80)
-	end
 	panel.addWatch:SetShown(watching)
-	selectTab(panel.addWatch, watching and self.watchAdding)
-	panel.track:SetShown(selling and selected ~= nil)
+	panel.addWatch:SetEnabled(not self.watchAdding)
 	local historyButton = panel.historyButton
 	historyButton.itemKey = (selling or watching or browsing) and key or nil
 	historyButton.itemLabel = historyButton.itemKey and detail or nil
@@ -2823,12 +3291,17 @@ function Sales:Refresh(rebuild)
 	panel.save:SetEnabled(hasWatchItem or panel.input:GetText() ~= "")
 	local list = watching and watchList()
 	local savedWatchItem = list and key and list[priceKey(key)] ~= nil or false
-	panel.buySearch:SetShown(watching and self.open == true)
-	panel.buySearch:SetEnabled(savedWatchItem)
 	panel.remove:SetShown(savedWatchItem)
 	self:UpdateWatchDropHint()
 	self:RefreshPriceHistory()
 	self:QueueVisibleMarketNames()
+end
+
+function Sales:SetFooterButton(button)
+	local panel = self.panel
+	panel.footerButton = button
+	button:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 13, 10)
+	self:Refresh()
 end
 
 function Sales:TogglePanel()
@@ -2836,6 +3309,9 @@ function Sales:TogglePanel()
 	if not self.panel then self:BuildPanel() end
 	local panel = self.panel
 	if panel:IsShown() then panel:Hide() return end
+	local auction = self.open and AuctionHouseFrame and AuctionHouseFrame:IsShown() and AuctionHouseFrame
+	panel.baseHeight = auction and (auction:GetHeight() * auction:GetEffectiveScale() / panel:GetEffectiveScale()) or panelHeight
+	panel:SetHeight(panel.baseHeight)
 	if not panel.moved then
 		panel:ClearAllPoints()
 		local shopper = addon.Vendor.CraftShopper and addon.Vendor.CraftShopper.frame
@@ -2854,6 +3330,8 @@ function Sales:TogglePanel()
 end
 
 function Sales:Close()
+	self:StopQuickSell()
+	self.quickPost = nil
 	self:StopFullScan()
 	self.open = nil
 	self.foreignScanPendingUntil = nil
@@ -2867,6 +3345,7 @@ function Sales:Close()
 	end
 	if self.events then
 		for _, event in ipairs(searchEvents) do self.events:UnregisterEvent(event) end
+		for _, event in ipairs(quickEvents) do self.events:UnregisterEvent(event) end
 		for _, event in ipairs(browseEvents) do self.events:UnregisterEvent(event) end
 		self.events:UnregisterEvent("REPLICATE_ITEM_LIST_UPDATE")
 	end
@@ -2891,6 +3370,7 @@ function Sales:Open()
 		self.open = true
 		self.market = marketForSide(self:GetConfirmedMarketSide()) or marketKey()
 		for _, event in ipairs(searchEvents) do self.events:RegisterEvent(event) end
+		for _, event in ipairs(quickEvents) do self.events:RegisterEvent(event) end
 		for _, event in ipairs(browseEvents) do self.events:RegisterEvent(event) end
 		self.events:RegisterEvent("REPLICATE_ITEM_LIST_UPDATE")
 		self:QueueWatchList()
@@ -2912,6 +3392,22 @@ function Sales:OnEvent(event, arg, success)
 		end)
 	elseif event == "AUCTION_HOUSE_CLOSED" then
 		self:Close()
+	elseif event == "AUCTION_HOUSE_AUCTION_CREATED" then
+		if self.quickPost then
+			if self.quick then
+				self.quickPost.confirmed = true
+			else
+				self.quickPost = nil
+				self:Refresh(true)
+			end
+		end
+	elseif event == "AUCTION_HOUSE_SHOW_ERROR" or event == "AUCTION_HOUSE_POST_ERROR" then
+		if self.quick or self.quickPost then
+			self.quickPost = nil
+			if self.quick then self:StopQuickSell(L["vendorAuctionQuickStopped"]) else self:Refresh() end
+		end
+	elseif event == "PLAYER_REGEN_DISABLED" then
+		self:StopQuickSell(L["vendorAuctionQuickStopped"])
 	elseif event == "CURSOR_CHANGED" then
 		self:UpdateWatchDropHint()
 	elseif event == "REPLICATE_ITEM_LIST_UPDATE" then

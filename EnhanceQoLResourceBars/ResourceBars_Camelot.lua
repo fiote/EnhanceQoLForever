@@ -648,6 +648,7 @@ local ensureDruidShowFormsDefaults
 local classPowerTypes
 local powertypeClasses
 local COSMETIC_BAR_KEYS = {
+	"manaCostPreview",
 	"barTexture",
 	"width",
 	"height",
@@ -2724,6 +2725,7 @@ local function ensureTextOverlayFrame(bar)
 	local baseLevel = bar:GetFrameLevel() or 1
 	local borderLevel = bar._rbBorder and bar._rbBorder:GetFrameLevel() or baseLevel
 	overlay:SetFrameStrata(bar:GetFrameStrata())
+	if addon.ManaCostPreview then addon.ManaCostPreview.SyncLayers(bar) end
 	overlay:SetFrameLevel(max(borderLevel + 1, baseLevel + 1))
 	return overlay
 end
@@ -2869,6 +2871,7 @@ local function applyBarFrameLayers(bar, cfg)
 			setFrameStrataIfNeeded(bar._rbTextOverlay, strata)
 			setFrameLevelIfNeeded(bar._rbTextOverlay, max(borderLevel + 1, childLevel))
 		end
+		if addon.ManaCostPreview then addon.ManaCostPreview.SyncLayers(bar) end
 		if bar.absorbBar then
 			setFrameStrataIfNeeded(bar.absorbBar, strata)
 			setFrameLevelIfNeeded(bar.absorbBar, childLevel)
@@ -3076,6 +3079,26 @@ function ResourceBars.StabilizeStatusBarGeometry(bar)
 	if texture.SetHorizTile then texture:SetHorizTile(false) end
 	if texture.SetVertTile then texture:SetVertTile(false) end
 	if texture.SetTexCoord then texture:SetTexCoord(0, 1, 0, 1) end
+end
+
+function ResourceBars.ConfigureManaCostPreview(bar, sample)
+	local preview = addon.ManaCostPreview
+	if not preview then return end
+	if ResourceBars._manaCostPreviewBar ~= bar then
+		preview.Disable(ResourceBars._manaCostPreviewBar)
+		ResourceBars._manaCostPreviewBar = bar
+	end
+	if not bar then return end
+	local cfg = bar._cfg or {}
+	if type(cfg.manaCostPreview) ~= "table" or cfg.manaCostPreview.enabled ~= true then
+		preview.Disable(bar)
+		return
+	end
+	preview.Configure(bar, cfg.manaCostPreview, {
+		inner = bar._rbInner, text = bar._rbTextOverlay, sample = sample,
+		asset = resolveTexture(cfg), atlas = isDefaultTextureSelection(cfg, "MANA") and RB.ATLAS_BY_POWER.MANA,
+		vertical = cfg.verticalFill == true, reverse = cfg.reverseFill == true,
+	})
 end
 
 function ResourceBars.EnsureHealthFillGeometryBar(bar, cfg)
@@ -5533,6 +5556,9 @@ function ResourceBars.ApplySharedPowerTypeOverride(runtimeCfg, sourceCfg, pType)
 	local overrides = type(sourceCfg) == "table" and sourceCfg.powerTypeOverrides or nil
 	local override = type(overrides) == "table" and overrides[pType] or nil
 	if type(override) ~= "table" or override.enabled ~= true then return end
+	if pType == "MANA" and override.manaCostPreviewOverride == true then
+		runtimeCfg.manaCostPreview = type(override.manaCostPreview) == "table" and CopyTable(override.manaCostPreview) or nil
+	end
 	local slotTextDisabled = runtimeCfg and runtimeCfg.textStyle == "NONE"
 	for _, key in ipairs(ResourceBars.POWER_TYPE_STYLE_OVERRIDE_KEYS or {}) do
 		if override[key] ~= nil and not (slotTextDisabled and key == "textStyle") and (key ~= "visualSegments" or pType == "MAELSTROM_WEAPON") then
@@ -6393,6 +6419,7 @@ function updatePowerBar(type, runeSlot)
 
 	local smooth = cfg.smoothFill == true and type ~= "ESSENCE"
 	setBarValue(bar, barValue, smooth)
+	if bar._rbManaCostPreviewActive then addon.ManaCostPreview.UpdateValue(bar, barValue, smooth and INTERP_EASE) end
 	if ResourceBars.UpdateFillSpark then ResourceBars.UpdateFillSpark(bar, cfg, type, pType, curPower, maxPower) end
 	bar._lastVal = barValue
 	local runtimeConfigRevision = ResourceBars._runtimeConfigRevision or 0
@@ -7186,6 +7213,7 @@ end
 
 function ResourceBars.ResetReusedPowerBarVisualState(bar, previousType, nextType)
 	if not bar or previousType == nextType then return end
+	if addon.ManaCostPreview then addon.ManaCostPreview.Disable(bar) end
 	if addon.ManaRegen then addon.ManaRegen.SetEnabled(bar, false) end
 
 	-- Shared frames are reused across specs, so clear visuals from the old type
@@ -7757,6 +7785,8 @@ local function setPowerbars(opts)
 	if addon and addon.Aura and addon.Aura.ResourceBars and addon.Aura.ResourceBars.ApplyVisibilityPreference then addon.Aura.ResourceBars.ApplyVisibilityPreference("fromSetPowerbars") end
 	if ResourceBars and ResourceBars.SyncRelativeFrameWidths and ResourceBars._widthSyncRequested == true then ResourceBars.SyncRelativeFrameWidths() end
 	if editModeActive and ensureEditModeRegistration then ensureEditModeRegistration() end
+	local manaBar = powerbar.MANA
+	ResourceBars.ConfigureManaCostPreview(manaBar and manaBar._rbDesiredVisible == true and manaBar or nil, editModeActive)
 	local needsPostReanchor = ResourceBars._reanchorRequested == true
 	ResourceBars._widthSyncRequested = nil
 	ResourceBars._reanchorRequested = nil
@@ -9021,6 +9051,7 @@ function ResourceBars.EnableResourceBars()
 end
 
 function ResourceBars.DisableResourceBars()
+	ResourceBars.ConfigureManaCostPreview(nil)
 	local whirlwindTracker = addon.Aura and addon.Aura.WhirlwindTracker
 	if whirlwindTracker and whirlwindTracker.SetActive then whirlwindTracker:SetActive(false) end
 	local function resetRuntimeFrame(frame)

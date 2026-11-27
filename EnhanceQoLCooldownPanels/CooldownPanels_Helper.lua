@@ -4508,6 +4508,23 @@ function Keybinds.GetEntryKeybindText(entry, layout, preEffectiveSpellId, preRes
 	return text
 end
 
+function CooldownPanels:RequestFormDependentRefreshes(stanceID)
+	local enabledPanels = self.runtime and self.runtime.enabledPanels
+	if not enabledPanels then return end
+	for panelID in pairs(enabledPanels) do
+		local panel = self:GetPanel(panelID, true)
+		for _, entry in pairs(panel and panel.entries or {}) do
+			if self.EntryAllowsSpec(entry) then
+				local stance = stanceID and entry.type == "STANCE" and self:GetStanceDefinition(entry)
+				if entry.stanceFilter ~= nil or (stance and stance.id == stanceID) or (not stanceID and entry.type == "MACRO") then
+					self:RequestPanelRefresh(panelID)
+					break
+				end
+			end
+		end
+	end
+end
+
 function CooldownPanels:RequestPanelRefresh(panelId)
 	if not panelId then return end
 	self.runtime = self.runtime or {}

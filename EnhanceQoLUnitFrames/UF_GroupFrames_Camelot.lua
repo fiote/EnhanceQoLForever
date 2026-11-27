@@ -897,9 +897,7 @@ function GF:ApplyPartyGroupBorder(cfg, header, anchor, growth, scale, spacing, u
 	local border = GF.EnsureGroupBorderFrame("party", anchor)
 	if not border then return end
 
-	local targetStrata = anchor:GetFrameStrata()
-	local strata = GF.NormalizeFrameStrataToken(borderCfg.strata)
-	if strata then targetStrata = strata end
+	local targetStrata = GF.NormalizeFrameStrataToken(borderCfg.strata) or GF.NormalizeFrameStrataToken(cfg.frameStrata) or anchor:GetFrameStrata()
 	if border.SetFrameStrata and targetStrata then border:SetFrameStrata(targetStrata) end
 
 	local levelOffset = clampNumber(tonumber(borderCfg.frameLevelOffset), -20, 1000, 3)
@@ -7556,17 +7554,13 @@ function GF:LayoutButton(self)
 				st.portraitHolder:SetPoint("CENTER", holderParent, "LEFT", holderX, 0)
 			end
 			if holderParent and st.portraitHolder.SetFrameStrata and holderParent.GetFrameStrata then
-				local portraitStrata = portraitDetached and GF.NormalizeFrameStrataToken(portraitCfg.detachedStrata) or nil
+				local portraitStrata = kind == "party" and GF.NormalizeFrameStrataToken(portraitCfg.detachedStrata) or nil
 				if portraitStrata then
 					st.portraitHolder:SetFrameStrata(portraitStrata)
 				else
 					st.portraitHolder:SetFrameStrata(holderParent:GetFrameStrata())
 				end
-				local levelOffset = 1
-				if portraitDetached and portraitCfg.detachedFrameLevelOffset ~= nil then
-					levelOffset = clampNumber(portraitCfg.detachedFrameLevelOffset, -20, 1000, 1)
-					levelOffset = floor(levelOffset + (levelOffset >= 0 and 0.5 or -0.5))
-				end
+				local levelOffset = kind == "party" and GFH.NormalizePortraitFrameLevelOffset(portraitCfg.detachedFrameLevelOffset) or 1
 				local portraitLevel = GF.ClampFrameLevel((holderParent:GetFrameLevel() or 0) + levelOffset)
 				st.portraitHolder:SetFrameLevel(portraitLevel)
 			end
@@ -13903,7 +13897,7 @@ function GF:EnsurePartyPetPreviewFrames(ownerCount)
 		btn._eqolPreview = true
 		btn._eqolPreviewIndex = i
 		btn._eqolUseSecureUnitAttribute = false
-		btn:SetFrameStrata(anchor:GetFrameStrata())
+		btn:SetFrameStrata(GF.NormalizeFrameStrataToken(cfg.frameStrata) or anchor:GetFrameStrata())
 		btn:SetFrameLevel(GF.ClampFrameLevel((anchor:GetFrameLevel() or 1) + 1))
 		if not btn._eqolUnit then GF:UnitButton_SetUnit(btn, "player") end
 	end
@@ -14306,8 +14300,10 @@ function GF:UpdatePreviewLayout(kind, blockPreview, sizeCycle)
 			end
 		end
 	end
+	local partyStrata = kind == "party" and (GF.NormalizeFrameStrataToken(cfg.frameStrata) or anchor:GetFrameStrata())
 	for i, btn in ipairs(frames) do
 		if btn then
+			if partyStrata and btn:GetFrameStrata() ~= partyStrata then btn:SetFrameStrata(partyStrata) end
 			if kind == "raid" and btn:GetParent() ~= anchor then btn:SetParent(anchor) end
 			local groupedEntry = groupedPreviewEntries and groupedPreviewEntries[i]
 			btn._eqolRaidBlockPreview = groupedEntry
@@ -16634,6 +16630,10 @@ function GF:ApplyHeaderAttributes(kind, options)
 	local skipChildSync = options and options.skipChildSync == true
 	local unitButtonTemplate = "EQOLUFGroupUnitButtonTemplate"
 	if kind == "party" then
+		local strata = GF.NormalizeFrameStrataToken(cfg.frameStrata)
+		local liveStrata = strata or header:GetParent():GetFrameStrata()
+		if header:GetFrameStrata() ~= liveStrata then header:SetFrameStrata(liveStrata) end
+
 		partySortState = GF.BuildPartyRuntimeSortState(cfg)
 		cfg.groupBy = nil
 		cfg.groupingOrder = nil
@@ -22357,11 +22357,11 @@ local function buildEditModeSettings(kind, editModeId, petAuraMode)
 			end,
 		},
 		{
-			name = L["UFPortraitDetachedStrata"] or "Portrait detached strata",
+			name = L["Strata"] or "Strata",
 			kind = SettingType.Dropdown,
 			field = "portraitDetachedStrata",
 			parentId = "portrait",
-			isShown = function() return kind == "party" and isPortraitDetached() end,
+			isShown = function() return kind == "party" end,
 			get = function()
 				local cfg = getCfg(kind)
 				local pcfg = cfg and cfg.portrait or {}
@@ -22381,37 +22381,32 @@ local function buildEditModeSettings(kind, editModeId, petAuraMode)
 				return GF.DropdownOptionLabel(GF._FRAME_STRATA_OPTIONS_WITH_DEFAULT, GF.NormalizeFrameStrataToken(pcfg.detachedStrata) or "", DEFAULT or "Default")
 			end,
 			generator = GF.DropdownRadioGenerator(GF._FRAME_STRATA_OPTIONS_WITH_DEFAULT),
-			isEnabled = function() return isPortraitEnabled() and isPortraitDetached() end,
+			isEnabled = isPortraitEnabled,
 		},
 		{
-			name = L["UFPortraitDetachedLevel"] or "Portrait detached level",
+			name = L["UFFrameLevel"] or "Frame level",
 			kind = SettingType.Slider,
 			allowInput = true,
 			field = "portraitDetachedFrameLevelOffset",
 			parentId = "portrait",
-			isShown = function() return kind == "party" and isPortraitDetached() end,
+			isShown = function() return kind == "party" end,
 			minValue = -20,
 			maxValue = 1000,
 			valueStep = 1,
 			get = function()
 				local cfg = getCfg(kind)
 				local pcfg = cfg and cfg.portrait or {}
-				local value = pcfg.detachedFrameLevelOffset
-				if value == nil then value = 1 end
-				value = clampNumber(value, -20, 1000, 1)
-				return floor(value + (value >= 0 and 0.5 or -0.5))
+				return GFH.NormalizePortraitFrameLevelOffset(pcfg.detachedFrameLevelOffset)
 			end,
 			set = function(_, value)
 				local cfg = getCfg(kind)
 				if not cfg then return end
 				cfg.portrait = cfg.portrait or {}
-				local levelOffset = clampNumber(value, -20, 1000, cfg.portrait.detachedFrameLevelOffset or 1)
-				levelOffset = floor(levelOffset + (levelOffset >= 0 and 0.5 or -0.5))
-				cfg.portrait.detachedFrameLevelOffset = levelOffset
+				cfg.portrait.detachedFrameLevelOffset = GFH.NormalizePortraitFrameLevelOffset(value)
 				if EditMode and EditMode.SetValue then EditMode:SetValue(editModeId, "portraitDetachedFrameLevelOffset", cfg.portrait.detachedFrameLevelOffset, nil, true) end
 				GF:ApplyHeaderAttributes(kind)
 			end,
-			isEnabled = function() return isPortraitEnabled() and isPortraitDetached() end,
+			isEnabled = isPortraitEnabled,
 		},
 		{
 			name = L["Show separator"] or "Show separator",
@@ -33864,6 +33859,9 @@ local function buildEditModeSettings(kind, editModeId, petAuraMode)
 		addon.Aura.GroupFrameNavigation.AppendPortraitSettings(settings, kind, editModeId, getCfg, requestEditModeSettingsRefresh, borderOptions)
 		if kind == "party" then addon.Aura.GroupFrameNavigation.AppendPartyPetPortraitSettings(settings, editModeId, getCfg, requestEditModeSettingsRefresh) end
 	end
+	if kind == "party" and not petAuraMode and addon.Aura.GroupFrameNavigation then
+		addon.Aura.GroupFrameNavigation.AppendPartyFrameStrataSetting(settings, editModeId, getCfg)
+	end
 	settings = GF.ReorderGroupEditModeSettings(settings)
 	UF.PartyVisibility.ConfigureSettings(settings, kind, editModeId, getCfg)
 	if addon.Aura.GroupFrameNavigation then addon.Aura.GroupFrameNavigation.ConfigureTextureSettings(settings, kind, editModeId, getCfg, DEFAULTS[kind], textureOptions) end
@@ -35576,6 +35574,7 @@ function GF.BuildEditModeLayoutDefaults(kind, cfg)
 		visibility = kind == "party" and CopyTable(cfg.visibility or {}) or nil,
 		visibilityFadeStrength = kind == "party" and (cfg.visibilityFadeStrength or 1) or nil,
 		overallAlpha = clampNumber(cfg.overallAlpha, 0, 1, 1),
+		frameStrata = kind == "party" and (GF.NormalizeFrameStrataToken(cfg.frameStrata) or "") or nil,
 		width = cfg.width or (DEFAULTS[kind] and DEFAULTS[kind].width) or 100,
 		height = cfg.height or (DEFAULTS[kind] and DEFAULTS[kind].height) or 24,
 		powerHeight = cfg.powerHeight or (DEFAULTS[kind] and DEFAULTS[kind].powerHeight) or 6,

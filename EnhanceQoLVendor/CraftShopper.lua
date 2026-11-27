@@ -1,8 +1,7 @@
--- Example file
--- luacheck: globals AUCTION_HOUSE_HEADER_ITEM NEED SEARCH
+-- luacheck: globals AUCTION_HOUSE_HEADER_ITEM NEED
 
 local parentAddonName = "EnhanceQoL"
-local _, addon = ...
+local childAddonName, addon = ...
 
 if _G[parentAddonName] then
 	addon = _G[parentAddonName]
@@ -26,6 +25,8 @@ local pendingScan
 local pendingAHShowScan
 local scanRunning
 local ahCache = {} -- [itemID] = true/false
+-- Confirmed purchases cover missing reagents until their counts rise in inventory.
+local purchasedReagents = {}
 
 local ShowCraftShopperFrameIfNeeded -- forward declaration
 local BuildShoppingList -- forward declaration for early users
@@ -78,6 +79,19 @@ local heavyEvents = {
 	"CRAFTINGORDERS_ORDER_PLACEMENT_RESPONSE",
 	"AUCTION_HOUSE_SHOW",
 	"AUCTION_HOUSE_CLOSED",
+	"COMMODITY_PRICE_UPDATED",
+	"COMMODITY_PRICE_UNAVAILABLE",
+	"COMMODITY_PURCHASE_FAILED",
+	"COMMODITY_PURCHASE_SUCCEEDED",
+	"ADDON_ACTION_BLOCKED",
+	"ADDON_ACTION_FORBIDDEN",
+	"ITEM_SEARCH_RESULTS_UPDATED",
+	"AUCTION_HOUSE_BROWSE_RESULTS_UPDATED",
+	"AUCTION_HOUSE_SHOW_ERROR",
+	"AUCTION_HOUSE_PURCHASE_COMPLETED",
+	"COMMODITY_PURCHASED",
+	"PLAYER_MONEY",
+	"ITEM_DATA_LOAD_RESULT",
 	"ADDON_LOADED",
 	"TRADE_SKILL_SHOW",
 	"TRADE_SKILL_CLOSE",
@@ -364,6 +378,7 @@ end
 function BuildShoppingList()
 	local need = {} -- [itemID] = fehlende Menge
 	local multipliers = addon.Vendor.CraftShopper.multipliers or {}
+	local hasQualityChoices = false
 
 	for _, isRecraft in ipairs(isRecraftTbl) do
 		local recipes = C_TradeSkillUI.GetRecipesTracked(isRecraft) or {}
@@ -377,6 +392,14 @@ function BuildShoppingList()
 						local reqQty = slot.quantityRequired * mult
 						local id = GetTrackedReagentItemID(slot)
 						if id then
+							if not hasQualityChoices then
+								for _, reagent in ipairs(slot.reagents) do
+									if reagent.itemID and reagent.itemID ~= 0 and reagent.itemID ~= id then
+										hasQualityChoices = true
+										break
+									end
+								end
+							end
 							need[id] = need[id] or {}
 							need[id].qty = (need[id].qty or 0) + reqQty
 							need[id].canAHBuy = isAHBuyable(id)
@@ -390,7 +413,14 @@ function BuildShoppingList()
 	local items = {}
 	for itemID, want in pairs(need) do
 		local owned = C_Item.GetItemCount(itemID, true, false, false, ShouldIncludeWarbandBank()) -- inkl. Bank, optional Warband Bank
-		local missing = math.max(want.qty - owned, 0)
+		local purchase = purchasedReagents[itemID]
+		if purchase then
+			local inBags = C_Item.GetItemCount(itemID)
+			purchase.quantity = math.max(0, purchase.quantity - math.max(0, inBags - purchase.inBags))
+			purchase.inBags = inBags
+			if purchase.quantity == 0 then purchasedReagents[itemID] = nil end
+		end
+		local missing = math.max(want.qty - owned - (purchase and purchase.quantity or 0), 0)
 		if missing > 0 then
 			table.insert(items, {
 				itemID = itemID,
@@ -402,6 +432,7 @@ function BuildShoppingList()
 			})
 		end
 	end
+	addon.Vendor.CraftShopper.hasQualityChoices = hasQualityChoices
 	return items
 end
 
@@ -511,7 +542,7 @@ end
 
 local function CreateCraftShopperIconButton(parent, texture, tooltipText, onClick)
 	local button = CreateFrame("Button", nil, parent)
-	button:SetSize(20, 20)
+	button:SetSize(27, 27)
 	button.icon = button:CreateTexture(nil, "ARTWORK")
 	button.icon:SetAllPoints()
 	button.icon:SetTexture(texture)
@@ -570,10 +601,109 @@ local function AnchorFrameToCurrentScreenPosition(frame)
 	frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left * frameScale / parentScale, top * frameScale / parentScale)
 end
 
+local function IsReadable(value, kind)
+	return (not _G.issecretvalue or not _G.issecretvalue(value)) and type(value) == kind
+end
+
+local function IsPositiveNumber(value)
+	return IsReadable(value, "number") and value > 0
+end
+
+local function MatchesItemKey(left, right)
+	if not IsReadable(left, "table") or not IsReadable(right, "table") then return false end
+	for name, value in pairs(right) do
+		if not IsReadable(value, "number") or not IsReadable(left[name], "number") or left[name] ~= value then return false end
+	end
+	return true
+end
+
+local function CanUseAuctionHouse()
+	local ahFrame = AuctionHouseFrame
+	if not ahFrame or not ahFrame:IsShown() or InCombatLockdown() or not C_AuctionHouse.IsThrottledMessageSystemReady() then return false end
+	if ahFrame.BuyDialog and ahFrame.BuyDialog:IsShown() then return false end
+	if _G.StaticPopup_Visible and (_G.StaticPopup_Visible("BUYOUT_AUCTION") or _G.StaticPopup_Visible("PURCHASE_AUCTION_UNIQUE")) then return false end
+	local sales = addon.Vendor.AuctionSales
+	return not sales or not (sales.fullScan or sales.watchSearch or (sales.search and not sales.search.received)
+		or (sales.foreignScanPendingUntil and GetTime() < sales.foreignScanPendingUntil))
+end
+
+local function GetPurchaseOffer(search, missing)
+	local ah = C_AuctionHouse
+	local ahFrame = AuctionHouseFrame
+	local itemID = search.key.itemID
+	if search.commodity then
+		local quantity, cost = 0, 0
+		for index = 1, ah.GetNumCommoditySearchResults(itemID) do
+			local row = ah.GetCommoditySearchResultInfo(itemID, index)
+			if not IsReadable(row, "table") or not IsPositiveNumber(row.unitPrice) or not IsPositiveNumber(row.quantity)
+				or not IsReadable(row.numOwnerItems, "number") or row.numOwnerItems < 0 or row.numOwnerItems > row.quantity then return end
+			local units = math.min(missing - quantity, row.quantity - row.numOwnerItems)
+			quantity = quantity + units
+			cost = cost + units * row.unitPrice
+			if quantity == missing then break end
+		end
+		if quantity > 0 then return { quantity = quantity, cost = cost } end
+		return
+	end
+
+	local view = ahFrame.ItemBuyFrame
+	if not view or not view:IsShown() or not MatchesItemKey(view.itemKey, search.key) then return end
+	local best
+	for index = 1, ah.GetNumItemSearchResults(search.key) do
+		local row = ah.GetItemSearchResultInfo(search.key, index)
+		if IsReadable(row, "table") and MatchesItemKey(row.itemKey, search.key) and IsPositiveNumber(row.auctionID)
+			and IsReadable(row.containsOwnerItem, "boolean") and not row.containsOwnerItem
+			and IsReadable(row.containsAccountItem, "boolean") and not row.containsAccountItem
+			and IsPositiveNumber(row.quantity) and row.quantity <= missing and IsPositiveNumber(row.buyoutAmount) then
+			local unitPrice = row.buyoutAmount / row.quantity
+			if not best or unitPrice < best.unitPrice or (unitPrice == best.unitPrice and row.auctionID < best.auctionID) then
+				best = { auctionID = row.auctionID, quantity = row.quantity, cost = row.buyoutAmount, unitPrice = unitPrice }
+			end
+		end
+	end
+	return best
+end
+
+local function BrowseReagent(item)
+	local itemName, _, quality, _, _, _, _, _, equipLoc, _, _, classID, subclassID = C_Item.GetItemInfo(item.itemID)
+	if not itemName then return end
+	local filters = { Enum.AuctionHouseFilter.ExactMatch }
+	if mapQuality[quality] then table.insert(filters, 1, mapQuality[quality]) end
+	AuctionHouseFrame:GetCategoriesList():SetSelectedCategory(nil)
+	AuctionHouseFrame:SetDisplayMode(_G.AuctionHouseFrameDisplayMode.Buy)
+	AuctionHouseFrame:SetSearchText(itemName)
+	C_AuctionHouse.SendBrowseQuery({
+		searchString = itemName,
+		sorts = {
+			{ sortOrder = Enum.AuctionHouseSortOrder.Name, reverseSort = false },
+			{ sortOrder = Enum.AuctionHouseSortOrder.Price, reverseSort = false },
+		},
+		filters = filters,
+		itemClassFilters = { classID = classID, subClassID = subclassID, inventoryType = equipLoc },
+	})
+end
+
+local function CreateShopperWindow(name, parent, title)
+	local forever = addon.variables.isForever
+	local frame = CreateFrame("Frame", name, parent, forever and "PortraitFrameTemplate" or "BasicFrameTemplate")
+	if forever then
+		frame:SetBorder("ButtonFrameTemplateNoPortrait")
+		frame:SetPortraitShown(false)
+		frame:SetTitleOffsets(26, -26)
+		frame:SetTitle(title)
+	else
+		frame.TitleText:SetText(title)
+	end
+	frame.CloseButton:ClearAllPoints()
+	frame.CloseButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -4, forever and 1 or 0)
+	frame.CloseButton:SetSize(20, 20)
+	return frame
+end
+
 local function CreateCraftShopperFrame()
 	if addon.Vendor.CraftShopper.frame then return addon.Vendor.CraftShopper.frame end
-	local frame = CreateFrame("Frame", "EnhanceQoLCraftShopperFrame", UIParent, "BasicFrameTemplateWithInset")
-	frame:SetSize(300, 400)
+	local frame = CreateShopperWindow("EnhanceQoLCraftShopperFrame", UIParent, L["vendorCraftShopperTitle"])
+	frame:SetSize(380, 400)
 	frame:Hide()
 	frame.frame = frame
 	frame.rows = {}
@@ -583,9 +713,9 @@ local function CreateCraftShopperFrame()
 	frame:SetMovable(true)
 	frame:SetResizable(true)
 	if frame.SetResizeBounds then
-		frame:SetResizeBounds(300, 240, nil, nil)
+		frame:SetResizeBounds(360, 280, nil, nil)
 	elseif frame.SetMinResize then
-		frame:SetMinResize(300, 240)
+		frame:SetMinResize(360, 280)
 	end
 	frame:RegisterForDrag("LeftButton")
 	frame:SetScript("OnDragStart", function(self)
@@ -595,11 +725,9 @@ local function CreateCraftShopperFrame()
 	end)
 	frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
 
-	frame.TitleText:SetText(L["vendorCraftShopperTitle"])
-
 	local resizeButton = CreateFrame("Button", nil, frame)
-	resizeButton:SetSize(16, 16)
-	resizeButton:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -6, 6)
+	resizeButton:SetSize(13, 13)
+	resizeButton:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -9, 9)
 	resizeButton:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
 	resizeButton:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
 	resizeButton:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
@@ -620,21 +748,18 @@ local function CreateCraftShopperFrame()
 	end)
 	frame.ResizeButton = resizeButton
 
-	local searchLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-	searchLabel:SetPoint("TOPLEFT", 12, -30)
-	searchLabel:SetText(SEARCH)
-
-	local search = CreateFrame("EditBox", nil, frame, "InputBoxTemplate")
-	search:SetAutoFocus(false)
-	search:SetHeight(22)
-	search:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -46)
-	search:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -18, -46)
-	search:SetScript("OnTextChanged", function() frame:Refresh() end)
+	local search = CreateFrame("EditBox", nil, frame, "SearchBoxTemplate")
+	search:SetHeight(25)
+	-- The native search box's left border extends five points beyond the edit box.
+	search:SetPoint("TOPLEFT", frame, "TOPLEFT", 22, -33)
+	search:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -17, -33)
+	search:HookScript("OnTextChanged", function() frame:Refresh() end)
 	frame.search = search
 
 	local ahCheck = CreateCraftShopperCheckButton(frame, L["vendorCraftShopperAHBuyable"])
-	ahCheck:SetPoint("TOPLEFT", search, "BOTTOMLEFT", -6, -6)
+	ahCheck:SetPoint("TOPLEFT", search, "BOTTOMLEFT", -10, -4)
 	ahCheck:SetScript("OnClick", function() frame:Refresh() end)
+	ahCheck:SetValue(true)
 	frame.ahBuyable = ahCheck
 
 	local qualityLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -643,8 +768,7 @@ local function CreateCraftShopperFrame()
 
 	local qualityPreference = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
 	qualityPreference:SetHeight(22)
-	qualityPreference:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -111)
-	qualityPreference:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -18, -111)
+	qualityPreference:SetPoint("TOPLEFT", qualityLabel, "BOTTOMLEFT", 0, -4)
 	qualityPreference:SetScript("OnClick", OpenQualityMenu)
 	qualityPreference.SetValue = SetQualityButtonValue
 	qualityPreference.GetValue = GetQualityButtonValue
@@ -652,23 +776,29 @@ local function CreateCraftShopperFrame()
 	frame.qualityPreference = qualityPreference
 
 	local header = CreateFrame("Frame", nil, frame)
-	header:SetPoint("TOPLEFT", qualityPreference, "BOTTOMLEFT", 0, -8)
-	header:SetPoint("TOPRIGHT", qualityPreference, "BOTTOMRIGHT", 0, -8)
-	header:SetHeight(22)
+	header:SetHeight(25)
 	frame.header = header
 
-	header.item = header:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-	header.item:SetPoint("LEFT")
+	local headerBackground = header:CreateTexture(nil, "BACKGROUND")
+	headerBackground:SetAllPoints()
+	if addon.variables.isForever then
+		headerBackground:SetColorTexture(0.32, 0.24, 0.16, 0.65)
+	else
+		headerBackground:SetColorTexture(0.27, 0.30, 0.34, 0.55)
+	end
+	header.item = header:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	header.item:SetPoint("LEFT", 7, 0)
 	header.item:SetText(AUCTION_HOUSE_HEADER_ITEM)
 	header.item:SetJustifyH("LEFT")
 
-	header.need = header:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+	header.need = header:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 	header.need:SetText(NEED)
-	header.need:SetJustifyH("LEFT")
+	header.need:SetJustifyH("RIGHT")
 
 	local scroll = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
 	scroll:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -2)
-	scroll:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -26, 28)
+	scroll:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -31, 20)
+	scroll.scrollBarHideable = true
 	frame.scroll = scroll
 
 	local content = CreateFrame("Frame", nil, scroll)
@@ -676,123 +806,390 @@ local function CreateCraftShopperFrame()
 	scroll:SetScrollChild(content)
 	frame.content = content
 
-	function frame:Refresh()
-		local normalFont, _, normalFlags = GameFontNormal:GetFont()
-		local searchText = (search:GetText() or ""):lower()
-		local rowWidth = math.max(260, scroll:GetWidth() - 4)
-		local itemWidth = math.floor(rowWidth * 0.45)
-		local needWidth = math.floor(rowWidth * 0.25)
-		local iconGap = 10
-		local iconSize = 20
-		local rowHeight = 32
-		local rowIndex = 0
+	local popup = CreateShopperWindow("EnhanceQoLCraftShopperPurchaseFrame", frame, L["vendorCraftShopperConfirmPurchase"])
+	popup:SetSize(300, 132)
+	popup:SetPoint("CENTER", frame, "CENTER")
+	popup:SetFrameStrata("DIALOG")
+	popup:EnableMouse(true)
+	popup:Hide()
 
-		header.item:SetWidth(itemWidth)
-		header.need:ClearAllPoints()
-		header.need:SetPoint("LEFT", header, "LEFT", itemWidth + 4, 0)
-		header.need:SetWidth(needWidth)
+	local purchaseIcon = popup:CreateTexture(nil, "ARTWORK")
+	purchaseIcon:SetSize(30, 30)
+	purchaseIcon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
-		for _, row in ipairs(frame.rows) do
-			row:Hide()
+	local purchaseName = popup:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
+	purchaseName:SetPoint("LEFT", purchaseIcon, "RIGHT", 8, 0)
+	purchaseName:SetJustifyH("LEFT")
+	purchaseName:SetWordWrap(false)
+
+	local summary = popup:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+	summary:SetPoint("TOPLEFT", popup, "TOPLEFT", 16, -70)
+	summary:SetPoint("TOPRIGHT", popup, "TOPRIGHT", -16, -70)
+	summary:SetJustifyH("CENTER")
+
+	local confirm = CreateFrame("Button", nil, popup, "UIPanelButtonTemplate")
+	confirm:SetSize(126, 24)
+	confirm:SetPoint("BOTTOMLEFT", 17, 11)
+	confirm:SetText(L["vendorCraftShopperBuyNow"])
+	local cancel = CreateFrame("Button", nil, popup, "UIPanelButtonTemplate")
+	cancel:SetSize(126, 24)
+	cancel:SetPoint("BOTTOMRIGHT", -17, 11)
+	cancel:SetText(L["vendorCraftShopperCancel"])
+
+	local ah = C_AuctionHouse
+	local function SetPurchaseName(name, quantity)
+		purchaseName:SetText(("%s × %d"):format(name, quantity))
+		local width = math.min(purchaseName:GetUnboundedStringWidth(), popup:GetWidth() - 78)
+		purchaseName:SetWidth(width)
+		purchaseIcon:ClearAllPoints()
+		purchaseIcon:SetPoint("TOPLEFT", popup, "TOP", -(width + purchaseIcon:GetWidth() + 8) / 2, -34)
+	end
+
+	function frame:EndQuote(cancelQuote)
+		local query = self.purchaseSearch
+		self.purchaseSearch = nil
+		if cancelQuote and query and query.commodity and query.cost then ah.CancelCommoditiesPurchase() end
+		popup:Hide()
+	end
+
+	local function cancelPurchase()
+		local query = frame.purchaseSearch
+		if query and query.commodity and query.waiting then
+			-- The next price event has no item ID. Drain it before opening another quote.
+			query.cancelled = true
+			popup:Hide()
+		else
+			frame:EndQuote(true)
+		end
+	end
+	cancel:SetScript("OnClick", cancelPurchase)
+	popup.CloseButton:SetScript("OnClick", cancelPurchase)
+	frame:HookScript("OnHide", cancelPurchase)
+
+	function frame:RefreshPurchaseAction()
+		local query = self.purchaseSearch
+		if not query or not query.cost then
+			confirm:SetEnabled(false)
+			return
+		end
+		local funds = GetMoney()
+		local affordable = IsReadable(funds, "number") and funds >= query.cost
+		SetPurchaseName(query.name, query.offer and query.offer.quantity or query.missing)
+		summary:SetText(("%s%s"):format(_G.GetMoneyString(query.cost, true),
+			affordable and "" or ("\n" .. (_G.ERR_NOT_ENOUGH_MONEY or ""))))
+		confirm:SetEnabled(affordable)
+	end
+
+	local function purchaseFailed(query)
+		query.waiting, query.cost, query.offer = nil, nil, nil
+		summary:SetText(L["vendorCraftShopperPurchaseFailed"])
+		frame:RefreshPurchaseAction()
+	end
+
+	local function queryItem(query, minPrice)
+		local ahFrame = AuctionHouseFrame
+		ahFrame:GetCategoriesList():SetSelectedCategory(nil)
+		ahFrame:SetDisplayMode(_G.AuctionHouseFrameDisplayMode.Buy)
+		ahFrame:SetSearchText(query.name)
+		ahFrame:SelectBrowseResult({ itemKey = query.key, minPrice = minPrice or 0 })
+		ahFrame:QueryItem(_G.AuctionHouseSearchContext.BuyItems, query.key)
+	end
+
+	function frame:StartQuickBuy(item)
+		if self.purchaseSearch or not CanUseAuctionHouse() then return end
+		if self.checkout and GetTime() <= self.checkout.expires then return end
+		if C_Item.GetItemCount(item.itemID, true, false, false, ShouldIncludeWarbandBank()) ~= item.owned then
+			Rescan()
+			return
 		end
 
+		local key = ah.MakeItemKey(item.itemID)
+		local info = IsReadable(key, "table") and ah.GetItemKeyInfo(key)
+		local knownType = IsReadable(info, "table") and IsReadable(info.isCommodity, "boolean")
+		local commodity = knownType and info.isCommodity
+		local browse = not knownType or (not commodity and (not IsReadable(info.isEquipment, "boolean") or info.isEquipment))
+		local query = { key = key, itemID = item.itemID, commodity = commodity, browsing = browse, waiting = true,
+			missing = item.missing, name = item.name, owned = item.owned }
+		if query.commodity and self.uncertainQuote then return end
+		self.purchaseSearch = query
+		purchaseIcon:SetTexture(item.icon or 134400)
+		SetPurchaseName(item.name, item.missing)
+		summary:SetText(L["vendorCraftShopperWaitingForPrice"])
+		self:RefreshPurchaseAction()
+		popup:Show()
+
+		if query.commodity then
+			local offer = GetPurchaseOffer(query, item.missing)
+			local estimatedUnitPrice = offer and offer.quantity == item.missing and math.ceil(offer.cost / offer.quantity) or nil
+			query.sending = true
+			ah.StartCommoditiesPurchase(item.itemID, item.missing, estimatedUnitPrice)
+			query.sending = nil
+		elseif browse then
+			BrowseReagent(item)
+		else
+			queryItem(query)
+		end
+		C_Timer.After(8, function()
+			if self.purchaseSearch ~= query or not query.waiting then return end
+			if query.commodity then self.uncertainQuote = true end
+			if query.cancelled then self:EndQuote() else purchaseFailed(query) end
+		end)
+	end
+
+	function frame:OnAuctionResults(event, value, total)
+		local query = self.purchaseSearch
+		if event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN" then
+			if not IsReadable(value, "string") or (value ~= childAddonName and value ~= parentAddonName) then return end
+			if query and query.sending then
+				self.uncertainQuote = true
+				purchaseFailed(query)
+			elseif self.checkout and self.checkout.sending then
+				self.checkout = nil
+			end
+			return
+		end
+		if event == "COMMODITY_PURCHASE_FAILED" and self.checkout and not self.checkout.auctionID then self.checkout = nil end
+		if event == "AUCTION_HOUSE_SHOW_ERROR" then
+			if self.checkout and self.checkout.auctionID then self.checkout = nil end
+			return
+		end
+		if not query then return end
+		if query.commodity then
+			if event == "COMMODITY_PRICE_UPDATED" and (query.waiting or query.cost) then
+				query.waiting = nil
+				if query.cancelled then
+					query.cost = IsPositiveNumber(total) and total or nil
+					self:EndQuote(true)
+				elseif IsPositiveNumber(total) then
+					query.cost = total
+					self:RefreshPurchaseAction()
+					C_Timer.After(30, function()
+						if self.purchaseSearch == query and query.cost then self:EndQuote(true) end
+					end)
+				else
+					purchaseFailed(query)
+				end
+			elseif event == "COMMODITY_PRICE_UNAVAILABLE" or event == "COMMODITY_PURCHASE_FAILED" then
+				if query.cancelled then self:EndQuote() else purchaseFailed(query) end
+			end
+			return
+		end
+
+		if event == "AUCTION_HOUSE_BROWSE_RESULTS_UPDATED" and query.waiting and query.browsing then
+			local best
+			for _, result in ipairs(ah.GetBrowseResults()) do
+				if IsReadable(result, "table") and IsReadable(result.itemKey, "table") and IsPositiveNumber(result.itemKey.itemID)
+					and result.itemKey.itemID == query.itemID and IsPositiveNumber(result.minPrice)
+					and (not best or result.minPrice < best.minPrice) then
+					local info = ah.GetItemKeyInfo(result.itemKey)
+					if IsReadable(info, "table") and IsReadable(info.isCommodity, "boolean") and not info.isCommodity then best = result end
+				end
+			end
+			if best then
+				query.browsing, query.key = nil, best.itemKey
+				queryItem(query, best.minPrice)
+			end
+			return
+		end
+		if event ~= "ITEM_SEARCH_RESULTS_UPDATED" or not query.waiting or not MatchesItemKey(value, query.key) then return end
+		local offer = GetPurchaseOffer(query, query.missing)
+		if not offer then
+			purchaseFailed(query)
+			return
+		end
+		query.waiting, query.offer, query.cost = nil, offer, offer.cost
+		self:RefreshPurchaseAction()
+	end
+
+	confirm:SetScript("OnClick", function()
+		local query = frame.purchaseSearch
+		if not query or not query.cost or not CanUseAuctionHouse() then return end
+		local itemID, funds = query.key.itemID, GetMoney()
+		local current
 		for _, item in ipairs(addon.Vendor.CraftShopper.items) do
+			if item.itemID == itemID then
+				current = item
+				break
+			end
+		end
+		if not current or current.hidden or current.missing ~= query.missing
+			or C_Item.GetItemCount(itemID, true, false, false, ShouldIncludeWarbandBank()) ~= query.owned then
+			frame:EndQuote(true)
+			Rescan()
+			return
+		end
+		local offer = query.offer
+		if query.commodity then
+			if not IsPositiveNumber(ah.GetQuoteDurationRemaining()) then
+				frame:EndQuote(true)
+				return
+			end
+		else
+			local fresh = GetPurchaseOffer(query, query.missing)
+			if not fresh then
+				purchaseFailed(query)
+				return
+			end
+			if not offer or fresh.auctionID ~= offer.auctionID or fresh.quantity ~= offer.quantity or fresh.cost ~= offer.cost then
+				query.offer, query.cost = fresh, fresh.cost
+				frame:RefreshPurchaseAction()
+				return
+			end
+		end
+		if not IsReadable(funds, "number") or funds < query.cost then return end
+		local checkout = {
+			itemID = itemID, quantity = offer and offer.quantity or query.missing, auctionID = offer and offer.auctionID,
+			inBags = C_Item.GetItemCount(itemID), expires = GetTime() + 15, sending = true,
+		}
+		frame.checkout = checkout
+		frame:EndQuote()
+		if query.commodity then
+			ah.ConfirmCommoditiesPurchase(itemID, query.missing, nil)
+		else
+			ah.PlaceBid(offer.auctionID, offer.cost)
+		end
+		checkout.sending = nil
+	end)
+
+	for _, method in ipairs({ "StartCommoditiesPurchase", "ConfirmCommoditiesPurchase", "CancelCommoditiesPurchase" }) do
+		hooksecurefunc(ah, method, function()
+			local query = frame.purchaseSearch
+			if query and query.commodity and not query.sending then frame:EndQuote() end
+			local checkout = frame.checkout
+			if method == "ConfirmCommoditiesPurchase" and checkout and not checkout.auctionID and not checkout.sending then frame.checkout = nil end
+		end)
+	end
+
+	function frame:OnPurchase(event, id, quantity)
+		local checkout = self.checkout
+		if not checkout or GetTime() > checkout.expires then return end
+		if event == "COMMODITY_PURCHASED" then
+			if checkout.auctionID or not IsPositiveNumber(id) or id ~= checkout.itemID or not IsPositiveNumber(quantity) or quantity ~= checkout.quantity then return end
+		elseif event == "COMMODITY_PURCHASE_SUCCEEDED" then
+			if checkout.auctionID then return end
+		elseif not IsPositiveNumber(id) or id ~= checkout.auctionID then
+			return
+		end
+		self.checkout = nil
+		local purchase = purchasedReagents[checkout.itemID]
+		purchasedReagents[checkout.itemID] = {
+			quantity = checkout.quantity + (purchase and purchase.quantity or 0),
+			inBags = checkout.inBags,
+		}
+		Rescan()
+	end
+
+	local empty = frame:CreateFontString(nil, "OVERLAY", "GameFontDisable")
+	empty:SetPoint("TOP", scroll, "TOP", 0, -18)
+	empty:SetText(_G.BROWSE_NO_RESULTS)
+
+	function frame:Refresh()
+		local shopper = addon.Vendor.CraftShopper
+		local showQuality = shopper.hasQualityChoices == true
+		qualityLabel:SetShown(showQuality)
+		qualityPreference:SetShown(showQuality)
+		qualityPreference:SetWidth(self:GetWidth() - 30)
+		header:ClearAllPoints()
+		if showQuality then
+			header:SetPoint("TOPLEFT", qualityPreference, "BOTTOMLEFT", -4, -8)
+		else
+			header:SetPoint("TOPLEFT", ahCheck, "BOTTOMLEFT", 2, -6)
+		end
+		header:SetWidth(self:GetWidth() - 45)
+
+		local searchText = (search:GetText() or ""):lower()
+		local rowWidth = header:GetWidth()
+		local rowHeight = 37
+		local needWidth = math.max(46, header.need:GetUnboundedStringWidth() + 8)
+		header.need:SetPoint("RIGHT", header, "RIGHT", -103, 0)
+		header.need:SetWidth(needWidth)
+		header.item:SetWidth(rowWidth - 117 - needWidth)
+
+		local visible = {}
+		for _, item in ipairs(shopper.items) do
 			if not item.hidden and (not ahCheck:GetValue() or item.ahBuyable) then
-				local name, _, quality = C_Item.GetItemInfo(item.itemID)
-				name = name or ("item:" .. item.itemID)
-				item.name = name
-				if searchText == "" or name:lower():find(searchText, 1, true) then
-					rowIndex = rowIndex + 1
-					local row = frame.rows[rowIndex]
-					if not row then
-						row = CreateFrame("Frame", nil, content)
-						row:SetHeight(rowHeight)
-
-						row.itemButton = CreateFrame("Button", nil, row)
-						row.itemButton:SetPoint("LEFT")
-						if row.itemButton.SetClipsChildren then row.itemButton:SetClipsChildren(true) end
-						row.itemButton.text = row.itemButton:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-						row.itemButton.text:SetPoint("LEFT")
-						row.itemButton.text:SetPoint("RIGHT")
-						row.itemButton.text:SetJustifyH("LEFT")
-						row.itemButton.text:SetWordWrap(false)
-						if row.itemButton.text.SetMaxLines then row.itemButton.text:SetMaxLines(1) end
-						row.itemButton:SetScript("OnEnter", function(self)
-							GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-							GameTooltip:SetItemByID(self.item.itemID)
-							GameTooltip:Show()
-						end)
-						row.itemButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
-
-						row.qty = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-						row.qty:SetJustifyH("LEFT")
-
-						row.searchBtn = CreateCraftShopperIconButton(row, ICON_PATH .. "search.tga", L["vendorCraftShopperSearchAH"], function(self)
-							local rowItem = self.item
-							local itemName, _, rowQuality, _, _, _, _, _, itemEquipLoc, _, _, classID, subclassID = C_Item.GetItemInfo(rowItem.itemID)
-							local qualityFilter = { Enum.AuctionHouseFilter.ExactMatch }
-							local mappedQuality = mapQuality[rowQuality]
-							if mappedQuality then table.insert(qualityFilter, 1, mappedQuality) end
-							if not itemName then return end
-							local query = {
-								searchString = itemName,
-								sorts = {
-									{ sortOrder = Enum.AuctionHouseSortOrder.Name, reverseSort = false },
-									{ sortOrder = Enum.AuctionHouseSortOrder.Price, reverseSort = false },
-								},
-								filters = qualityFilter,
-								itemClassFilters = {
-									classID = classID,
-									subClassID = subclassID,
-									inventoryType = itemEquipLoc,
-								},
-							}
-							C_AuctionHouse.SendBrowseQuery(query)
-							AuctionHouseFrame:Show()
-							AuctionHouseFrame:Raise()
-						end)
-
-						row.removeBtn = CreateCraftShopperIconButton(row, ICON_PATH .. "delete.tga", L["vendorCraftShopperHideFromList"], function(self)
-							self.item.hidden = true
-							frame:Refresh()
-						end)
-
-						frame.rows[rowIndex] = row
-					end
-
-					row:SetParent(content)
-					row:ClearAllPoints()
-					row:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -((rowIndex - 1) * rowHeight))
-					row:SetWidth(rowWidth)
-					row.item = item
-					row.itemButton.item = item
-					row.searchBtn.item = item
-					row.removeBtn.item = item
-
-					row.itemButton:SetSize(itemWidth, rowHeight)
-					row.itemButton.text:SetFont(normalFont, 14, normalFlags)
-					local color = select(4, C_Item.GetItemQualityColor(quality or 1))
-					row.itemButton.text:SetText(("|c%s%s|r"):format(color, name))
-
-					row.qty:ClearAllPoints()
-					row.qty:SetPoint("LEFT", row, "LEFT", itemWidth + 4, 0)
-					row.qty:SetWidth(needWidth)
-					row.qty:SetFont(normalFont, 14, normalFlags)
-					row.qty:SetText(("%d"):format(item.missing))
-
-					local iconStart = itemWidth + needWidth + 8
-					row.searchBtn:ClearAllPoints()
-					row.searchBtn:SetPoint("LEFT", row, "LEFT", iconStart, 0)
-					row.removeBtn:ClearAllPoints()
-					row.removeBtn:SetPoint("LEFT", row.searchBtn, "RIGHT", iconGap, 0)
-					row.searchBtn:SetSize(iconSize, iconSize)
-					row.removeBtn:SetSize(iconSize, iconSize)
-					row:Show()
+				local name, _, quality, _, _, _, _, _, _, icon = C_Item.GetItemInfo(item.itemID)
+				item.name = name or ("item:" .. item.itemID)
+				item.quality, item.icon = quality, icon
+				if searchText == "" or item.name:lower():find(searchText, 1, true) then
+					visible[#visible + 1] = item
 				end
 			end
 		end
+		table.sort(visible, function(left, right)
+			if left.name == right.name then return left.itemID < right.itemID end
+			return left.name < right.name
+		end)
 
-		content:SetSize(rowWidth, math.max(1, rowIndex * rowHeight))
+		for index, item in ipairs(visible) do
+			local row = self.rows[index]
+			if not row then
+				row = CreateFrame("Frame", nil, content)
+				row:SetHeight(rowHeight)
+				row:EnableMouse(true)
+				row.background = row:CreateTexture(nil, "BACKGROUND")
+				row.background:SetAllPoints()
+				row:SetScript("OnEnter", function(button)
+					GameTooltip:SetOwner(button, "ANCHOR_RIGHT")
+					GameTooltip:SetItemByID(button.item.itemID)
+					GameTooltip:Show()
+				end)
+				row:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+				row.icon = row:CreateTexture(nil, "ARTWORK")
+				row.icon:SetSize(26, 26)
+				row.icon:SetPoint("LEFT", 7, 0)
+				row.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+				row.name = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
+				row.name:SetPoint("LEFT", row.icon, "RIGHT", 8, 0)
+				row.name:SetJustifyH("LEFT")
+				row.name:SetWordWrap(false)
+
+				row.qty = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
+				row.qty:SetPoint("RIGHT", row, "RIGHT", -103, 0)
+				row.qty:SetJustifyH("RIGHT")
+
+				row.searchBtn = CreateCraftShopperIconButton(row, ICON_PATH .. "search.tga", L["vendorCraftShopperSearchAH"], function()
+					if CanUseAuctionHouse() and not self.purchaseSearch then BrowseReagent(row.item) end
+				end)
+				row.searchBtn:SetPoint("RIGHT", row, "RIGHT", -35, 0)
+				row.buyBtn = CreateCraftShopperIconButton(row, ICON_PATH .. "buy.tga", L["vendorCraftShopperBuyItems"], function()
+					self:StartQuickBuy(row.item)
+				end)
+				row.buyBtn:SetPoint("RIGHT", row, "RIGHT", -66, 0)
+				row.removeBtn = CreateCraftShopperIconButton(row, ICON_PATH .. "delete.tga", L["vendorCraftShopperHideFromList"], function()
+					row.item.hidden = true
+					self:Refresh()
+				end)
+				row.removeBtn:SetPoint("RIGHT", row, "RIGHT", -4, 0)
+				self.rows[index] = row
+			end
+
+			row.item = item
+			row:ClearAllPoints()
+			row:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -(index - 1) * rowHeight)
+			row:SetWidth(rowWidth)
+			row.icon:SetTexture(item.icon or 134400)
+			row.name:SetWidth(rowWidth - 152 - needWidth)
+			row.name:SetText(item.name)
+			local red, green, blue = C_Item.GetItemQualityColor(item.quality or 1)
+			row.name:SetTextColor(red, green, blue)
+			row.qty:SetWidth(needWidth)
+			row.qty:SetText(item.missing)
+			row.searchBtn:SetShown(item.ahBuyable)
+			row.buyBtn:SetShown(item.ahBuyable)
+			row.background:SetColorTexture(1, 1, 1, index % 2 == 0 and 0.065 or 0.035)
+			row:Show()
+		end
+		for index = #visible + 1, #self.rows do
+			self.rows[index]:Hide()
+		end
+
+		content:SetSize(rowWidth, math.max(1, #visible * rowHeight))
+		if scroll:GetVerticalScroll() > scroll:GetVerticalScrollRange() then
+			scroll:SetVerticalScroll(scroll:GetVerticalScrollRange())
+		end
+		empty:SetShown(#visible == 0)
 	end
 
 	addon.Vendor.CraftShopper.frame = frame
@@ -818,13 +1215,12 @@ function ShowCraftShopperFrameIfNeeded()
 		SyncCraftShopperQualityControls()
 		if not ui.frame.userMoved and not ui.frame.userSized then
 			ui.frame:ClearAllPoints()
-			ui.frame:SetPoint("TOPLEFT", AuctionHouseFrame, "TOPRIGHT", 5, 0)
-			local width = math.max(300, AuctionHouseFrame:GetWidth() * 0.4)
-			local height = math.max(240, AuctionHouseFrame:GetHeight())
+			ui.frame:SetPoint("TOPLEFT", AuctionHouseFrame, "TOPRIGHT", addon.variables.isForever and 12 or 7, 0)
+			local width = math.max(380, AuctionHouseFrame:GetWidth() * 0.44)
+			local height = math.max(280, AuctionHouseFrame:GetHeight())
 			ui.frame:SetSize(width, height)
 		end
-		ui.ahBuyable:SetValue(true)
-		ui.frame:Show()
+			ui.frame:Show()
 		ui:Refresh()
 	else
 		HideCraftShopperFrame()
@@ -1055,8 +1451,35 @@ f:SetScript("OnEvent", function(_, event, arg1, arg2)
 			pendingAHShowScan = nil
 			Rescan()
 		end)
+	elseif event == "ITEM_SEARCH_RESULTS_UPDATED" or event == "AUCTION_HOUSE_BROWSE_RESULTS_UPDATED" or event == "COMMODITY_PRICE_UPDATED"
+		or event == "COMMODITY_PRICE_UNAVAILABLE" or event == "COMMODITY_PURCHASE_FAILED" or event == "AUCTION_HOUSE_SHOW_ERROR"
+		or event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN" then
+		local panel = addon.Vendor.CraftShopper.frame
+		if panel then panel:OnAuctionResults(event, arg1, arg2) end
+	elseif event == "AUCTION_HOUSE_PURCHASE_COMPLETED" or event == "COMMODITY_PURCHASED" or event == "COMMODITY_PURCHASE_SUCCEEDED" then
+		local panel = addon.Vendor.CraftShopper.frame
+		if panel then panel:OnPurchase(event, arg1, arg2) end
+	elseif event == "PLAYER_MONEY" then
+		local panel = addon.Vendor.CraftShopper.frame
+		if panel and panel:IsShown() then panel:RefreshPurchaseAction() end
+	elseif event == "ITEM_DATA_LOAD_RESULT" then
+		if not arg2 then return end
+		local shopper = addon.Vendor.CraftShopper
+		if shopper.frame and shopper.frame:IsShown() then
+			for _, item in ipairs(shopper.items) do
+				if item.itemID == arg1 then
+					shopper.frame:Refresh()
+					break
+				end
+			end
+		end
 	elseif event == "AUCTION_HOUSE_CLOSED" then
 		CancelPendingAHShowScan()
+		local panel = addon.Vendor.CraftShopper.frame
+		if panel then
+			panel.checkout, panel.uncertainQuote = nil, nil
+			panel:EndQuote()
+		end
 		HideCraftShopperFrame()
 	else
 		Rescan()

@@ -2063,6 +2063,16 @@ local defaults = {
 		},
 		pvpIndicator = {
 			enabled = false,
+			timer = {
+				enabled = true,
+				fontSize = 12,
+				fontOutline = "__EQOL_GLOBAL_FONT_STYLE__",
+				anchor = "BOTTOM",
+				offsetX = 0,
+				offsetY = 0,
+				color = { 1, 1, 1 },
+				useClassColor = false,
+			},
 			displayMode = "ICON",
 			size = 20,
 			font = nil,
@@ -10601,6 +10611,10 @@ local function updatePower(cfg, unit, allowVisibilityChanges, deferAuxiliaryUpda
 				bar:SetMinMaxValues(0, maxv > 0 and maxv or 1)
 			end
 			bar:SetValue(cur or 0, interpolation)
+			if bar._rbManaCostPreviewActive then
+				if powerEnum == Enum.PowerType.Mana then addon.ManaCostPreview.UpdateValue(bar, cur or 0, interpolation)
+				else addon.ManaCostPreview.Disable(bar) end
+			end
 			UFHelper.UpdateBarFillSpark(bar, pcfg, unit, "power", powerEnum, cur, maxv)
 			local powerColorDirty = st._powerColorDirty
 			if not powerColorDirty and st._powerColorEnum ~= powerEnum then powerColorDirty = true end
@@ -10672,6 +10686,10 @@ local function updatePower(cfg, unit, allowVisibilityChanges, deferAuxiliaryUpda
 				secondaryBar:SetMinMaxValues(0, maxv > 0 and maxv or 1)
 			end
 			secondaryBar:SetValue(cur, interpolation)
+			if secondaryBar._rbManaCostPreviewActive then
+				if resolvedToken == "MANA" then addon.ManaCostPreview.UpdateValue(secondaryBar, cur, interpolation)
+				else addon.ManaCostPreview.Disable(secondaryBar) end
+			end
 			UFHelper.UpdateBarFillSpark(secondaryBar, secondaryCfg, unit, "power", enumId, cur, maxv)
 			local secondaryColorDirty = st._secondaryPowerColorDirty
 			if not secondaryColorDirty and st._secondaryPowerColorEnum ~= enumId then secondaryColorDirty = true end
@@ -10917,6 +10935,10 @@ local function syncTextFrameLevels(st)
 	setFrameLevelAbove(st.healthTextLayer, textAnchor, 5)
 	setFrameLevelAbove(st.powerTextLayer, st.power, 5)
 	if st.secondaryPowerTextLayer and st.secondaryPower then setFrameLevelAbove(st.secondaryPowerTextLayer, st.secondaryPower, 5) end
+	if addon.ManaCostPreview then
+		if st.power and st.power._rbManaCostPreviewActive then addon.ManaCostPreview.SyncLayers(st.power) end
+		if st.secondaryPower and st.secondaryPower._rbManaCostPreviewActive then addon.ManaCostPreview.SyncLayers(st.secondaryPower) end
+	end
 	if st.dataBarTextLayer and st.dataBar then setFrameLevelAbove(st.dataBarTextLayer, st.dataBar, 5) end
 	setFrameLevelAbove(st.statusTextLayer, textAnchor, 5)
 	local nameLayer = st.nameTextLayer or st.statusTextLayer
@@ -12730,6 +12752,28 @@ local function ensureFrames(unit)
 	hookTextFrameLevels(st)
 end
 
+function UF.ConfigurePlayerManaCostPreview(st, pcfg, powerEnabled, powerEnum, secondaryCfg, secondaryToken, sample)
+	local preview = addon.ManaCostPreview
+	if not preview then return end
+	local function configure(bar, text, cfg, isMana)
+		if not bar then return end
+		if not isMana or type(pcfg.manaCostPreview) ~= "table" or pcfg.manaCostPreview.enabled ~= true then
+			preview.Disable(bar)
+			return
+		end
+		local texture = bar:GetStatusBarTexture()
+		local fillStyle = Enum.StatusBarFillStyle
+		preview.Configure(bar, pcfg.manaCostPreview, {
+			text = text, sample = sample, asset = UFHelper.resolveTexture(cfg.texture),
+			atlas = (not cfg.texture or cfg.texture == "" or cfg.texture == "DEFAULT") and texture:GetAtlas(),
+			vertical = bar:GetOrientation() == "VERTICAL",
+			reverse = fillStyle and bar.GetFillStyle and bar:GetFillStyle() == fillStyle.Reverse or bar:GetReverseFill(),
+		})
+	end
+	configure(st.power, st.powerTextLayer, pcfg, powerEnabled and powerEnum == Enum.PowerType.Mana)
+	configure(st.secondaryPower, st.secondaryPowerTextLayer, secondaryCfg, secondaryToken == "MANA" and secondaryCfg.enabled ~= false)
+end
+
 local function applyBars(cfg, unit, preview)
 	local st = preview or states[unit]
 	if not st or not st.health or not st.power then return end
@@ -12979,6 +13023,10 @@ local function applyBars(cfg, unit, preview)
 		UFHelper.applyBarTextColor(secondaryCfg, defSP, st.secondaryPowerTextLeft, st.secondaryPowerTextCenter, st.secondaryPowerTextRight)
 	end
 	syncTextFrameLevels(st)
+	if not preview and unit == UNIT.PLAYER then
+		local edit = addon.EditModeLib
+		UF.ConfigurePlayerManaCostPreview(st, pcfg, powerEnabled, powerEnum, secondaryCfg, st._secondaryPowerToken, edit and edit.IsInEditMode and edit:IsInEditMode())
+	end
 end
 
 function UF.RenderFirstStartPlayerPreview(state, cfg)
@@ -13473,6 +13521,10 @@ local function applyConfig(unit)
 		if unit == UNIT.PLAYER and UF.Stance then UF.Stance.Apply(cfg, st) end
 		if st and st.frame then
 			if unit == UNIT.PLAYER and addon.ManaRegen then addon.ManaRegen.SetEnabled(st.power, false) end
+			if unit == UNIT.PLAYER and addon.ManaCostPreview then
+				addon.ManaCostPreview.Disable(st.power)
+				addon.ManaCostPreview.Disable(st.secondaryPower)
+			end
 			if st.barGroup then st.barGroup:Hide() end
 			if st.status then st.status:Hide() end
 			UF.DataBar.Hide(st)
@@ -14284,6 +14336,7 @@ local generalEvents = {
 	"PLAYER_REGEN_ENABLED",
 	"PLAYER_FLAGS_CHANGED",
 	"HONOR_LEVEL_UPDATE",
+	"PVP_TIMER_UPDATE",
 	"PLAYER_UPDATE_RESTING",
 	"GROUP_ROSTER_UPDATE",
 	"PARTY_LEADER_CHANGED",
@@ -14716,6 +14769,9 @@ function UF.ApplyPlayerDisplayPowerVisuals(cfg, sig, st)
 	if st.secondaryPower and sig.trackSecondary and sig.secondaryEnabled and UFHelper and UFHelper.configureSpecialTexture then
 		UFHelper.configureSpecialTexture(st.secondaryPower, sig.secondaryResolvedToken or sig.secondaryToken, secondaryCfg.texture, secondaryCfg, sig.secondaryEnum)
 	end
+	local edit = addon.EditModeLib
+	UF.ConfigurePlayerManaCostPreview(st, pcfg, sig.primaryEnabled, sig.mainEnum, secondaryCfg, sig.secondaryEnabled and (sig.secondaryResolvedToken or sig.secondaryToken),
+		edit and edit.IsInEditMode and edit:IsInEditMode())
 	if sig.trackPrimary then st._powerColorDirty = true end
 	if sig.trackSecondary then st._secondaryPowerColorDirty = true end
 end
@@ -15578,6 +15634,8 @@ onEvent = function(self, event, unit, ...)
 		applyVisibilityRulesAll()
 	elseif event == "HONOR_LEVEL_UPDATE" then
 		UF.UpdateAllPvPIndicators()
+	elseif event == "PVP_TIMER_UPDATE" then
+		UFHelper.updatePvPIndicator(states[UNIT.PLAYER], UNIT.PLAYER, getCfg(UNIT.PLAYER), defaultsFor(UNIT.PLAYER), true)
 	elseif event == "PLAYER_FLAGS_CHANGED" then
 		if unit and allowedEventUnit[unit] then
 			updateUnitStatusIndicator(getCfg(unit), unit)
@@ -16293,6 +16351,10 @@ function UF.Disable()
 	local cfg = ensureDB("player")
 	cfg.enabled = false
 	if addon.ManaRegen and states.player then addon.ManaRegen.SetEnabled(states.player.power, false) end
+	if addon.ManaCostPreview and states.player then
+		addon.ManaCostPreview.Disable(states.player.power)
+		addon.ManaCostPreview.Disable(states.player.secondaryPower)
+	end
 	UF.SetRuntimeConsumerActive("unit", UNIT.PLAYER, false)
 	if states.player and states.player.frame then states.player.frame:Hide() end
 	TotemFrameUtil.restoreTotemFrame()
