@@ -2,7 +2,7 @@
 ## X-EQOL-Flavor: forever
 ## Title: Enhance QoL Cooldown Panels
 ## Author: R41Z0R
-## Version: 13.24.4
+## Version: 13.24.5
 ## Notes: Custom cooldown panels and tracked ability bars
 ## Notes-deDE: Eigene Abklingzeit-Panels und Leisten fuer verfolgte Faehigkeiten
 ## Notes-esES: Paneles de reutilizacion personalizados y barras de habilidades rastreadas

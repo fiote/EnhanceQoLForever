@@ -1,0 +1,50 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.blizzard.com/wow/ui/ ..\FrameXML\UI.xsd">
+
+    <Button name="EQOLMailboxRowTemplate" virtual="true">
+        <Size x="246" y="23"/>
+    </Button>
+
+    <Frame name="EQOLMailboxLayoutTemplate" virtual="true" hidden="true" clampedToScreen="true" enableMouse="true">
+        <Size x="286" y="430"/>
+        <Scripts>
+            <OnShow inherit="prepend">EQOLMailboxFrame_OnShow(self);</OnShow>
+        </Scripts>
+        <Frames>
+            <EditBox name="$parentSearchBox" inherits="SearchBoxTemplate" autoFocus="false">
+                <Size y="24"/>
+                <Anchors>
+                    <Anchor point="TOPLEFT" x="17" y="-33"/>
+                    <Anchor point="TOPRIGHT" x="-13" y="-33"/>
+                </Anchors>
+            </EditBox>
+            <Frame name="$parentHeader">
+                <Size y="25"/>
+                <Anchors>
+                    <Anchor point="TOPLEFT" x="12" y="-66"/>
+                    <Anchor point="TOPRIGHT" x="-12" y="-66"/>
+                </Anchors>
+            </Frame>
+            <ScrollFrame name="$parentScrollFrame" inherits="HybridScrollFrameTemplate">
+                <Anchors>
+                    <Anchor point="TOPLEFT" relativeTo="$parentHeader" relativePoint="BOTTOMLEFT"/>
+                    <Anchor point="BOTTOMRIGHT" x="-28" y="12"/>
+                </Anchors>
+                <Frames>
+                    <Slider name="$parentScrollBar" inherits="HybridScrollBarTemplate">
+                        <Anchors>
+                            <Anchor point="TOPLEFT" relativeTo="$parent" relativePoint="TOPRIGHT" y="-16"/>
+                            <Anchor point="BOTTOMLEFT" relativeTo="$parent" relativePoint="BOTTOMRIGHT" y="16"/>
+                        </Anchors>
+                    </Slider>
+                    <Frame name="$parentScrollChild">
+                        <Anchors>
+                            <Anchor point="TOPLEFT"/>
+                        </Anchors>
+                    </Frame>
+                </Frames>
+            </ScrollFrame>
+        </Frames>
+    </Frame>
+</Ui>

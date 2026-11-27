@@ -761,7 +761,7 @@ end
 
 function ChatIM:RequestConversationWho(target)
 	target = target or self.activeTab
-	if not self.enabled or (InCombatLockdown and InCombatLockdown()) then return end
+	if not self.enabled or (InCombatLockdown and InCombatLockdown()) or self:IsChatMessagingRestricted() then return end
 	local lookup = self.whoLookup
 	local tab = self.tabs and self.tabs[target]
 	if not lookup or not tab or tab.isBN then return end

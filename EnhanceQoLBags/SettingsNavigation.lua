@@ -764,6 +764,25 @@ function UI.ApplyLayout(page)
 		end
 	end
 	for _, name in ipairs({ "OneBagMode", "OneBagFreeSlotsAtEnd", "CombineFreeSlots", "CombineDuplicateItems", "ClearNewItemsOnHeaderClick" }) do placeCheckbox(name) end
+	local autoClear = page.NewItemsAutoClear
+	if autoClear then
+		autoClear:SetShown(general)
+		if general then
+			local rowWidth = page.Content:GetWidth() - 28
+			autoClear:ClearAllPoints()
+			autoClear:SetPoint("TOPLEFT", page.Content, "TOPLEFT", 14, -offset)
+			autoClear:SetPoint("RIGHT", page.Content, "RIGHT", -14, 0)
+			local rowOffset = UI.PlaceText(autoClear.Label, autoClear, 0, 4, rowWidth)
+			rowOffset = UI.PlaceText(autoClear.Hint, autoClear, 0, rowOffset + 2, rowWidth)
+			autoClear.Hint:SetTextColor(unpack(UI.Colors().textSubtle))
+			autoClear.Editor:ClearAllPoints()
+			autoClear.Editor:SetPoint("TOPLEFT", autoClear, "TOPLEFT", 0, -rowOffset - 3)
+			autoClear.Editor:SetWidth(math.max(100, math.min(300, rowWidth)))
+			autoClear:SetHeight(rowOffset + 29)
+			autoClear.Numeric:Sync()
+			offset = offset + autoClear:GetHeight() + 8
+		end
+	end
 	if oneBag then placeCheckbox("ShowFreeSlots") else page.ShowFreeSlots:Hide(); page.ShowFreeSlots.Label:Hide() end
 	page.ShowNewItems:Hide(); page.ShowNewItems.Label:Hide()
 	if not oneBag then offset = offset + 12; heading("categories", L["settingsCategoriesLabel"]) end

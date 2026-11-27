@@ -36,7 +36,7 @@ local data = {
 		children = {
 			{
 				listFunc = function()
-					local contacts = addon.Mailbox and addon.Mailbox.NormalizeContacts and addon.Mailbox.NormalizeContacts() or addon.db["mailboxContacts"]
+					local contacts = addon.Mailbox and addon.Mailbox.NormalizeContacts()
 					if type(contacts) ~= "table" then contacts = {} end
 					local entries = {}
 					local tList = { [""] = "" }
@@ -67,7 +67,7 @@ local data = {
 				get = function() return "" end,
 				set = function(key)
 					if not key or key == "" then return end
-					local contacts = addon.Mailbox and addon.Mailbox.NormalizeContacts and addon.Mailbox.NormalizeContacts() or (addon.db and addon.db["mailboxContacts"])
+					local contacts = addon.Mailbox and addon.Mailbox.NormalizeContacts()
 					if type(contacts) ~= "table" or not contacts[key] then return end
 
 					local dialogKey = "EQOL_MAILBOX_CONTACT_REMOVE"
@@ -83,10 +83,10 @@ local data = {
 						}
 
 					StaticPopupDialogs[dialogKey].OnAccept = function(_, contactKey)
-						local currentContacts = addon.Mailbox and addon.Mailbox.NormalizeContacts and addon.Mailbox.NormalizeContacts() or (addon.db and addon.db["mailboxContacts"])
+						local currentContacts = addon.Mailbox and addon.Mailbox.NormalizeContacts()
 						if not contactKey or type(currentContacts) ~= "table" then return end
 						currentContacts[contactKey] = nil
-						if addon.Mailbox and addon.Mailbox.RefreshList then addon.Mailbox:RefreshList() end
+						if addon.Mailbox and addon.Mailbox.RefreshList then addon.Mailbox:RefreshList(addon.variables.isForever and not addon.variables.isTBC) end
 					end
 
 					StaticPopup_Show(dialogKey, key, nil, key)

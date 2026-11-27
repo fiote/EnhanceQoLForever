@@ -118,10 +118,21 @@ local function glyph(parent,kind,color,weight,alternate)
  end
 end
 
+local nativeIcons = {
+ bank = { texture = "Interface\\Icons\\INV_Misc_Coin_01" },
+ lists = { texture = "Interface\\Icons\\INV_Misc_Book_09" },
+ bags = { texture = "Interface\\Icons\\INV_Misc_Bag_08" },
+ mode = { texture = "Interface\\Buttons\\UI-RefreshButton" },
+ sort = { atlas = "bags-button-autosort-up", texture = "Interface\\Icons\\INV_Misc_EngGizmos_17" },
+ settings = { atlas = "questlog-icon-setting", texture = "Interface\\Buttons\\UI-OptionsButton" },
+ close = { texture = "Interface\\Buttons\\UI-Panel-MinimizeButton-Up", crop = { 1/6, 5/6, 1/6, 5/6 } },
+}
+
 function T.PositionIcon(button)
  local icon=button.ToolbarIcon
  if not icon then return end
  local x,y=icon.offsetX or 0,icon.offsetY or 0
+ if button._toolbarNativeStyle then x,y=0,0 end
  if button._toolbarPressed then x,y=x+1,y-1 end
  icon:ClearAllPoints()
  if math.abs(x)<.0001 and math.abs(y)<.0001 then icon:SetPoint("CENTER")
@@ -152,6 +163,27 @@ function T.Update(button, r, g, b)
  local icon = button.ToolbarIcon
  if not icon then return end
  if not r then r,g,b = T.GetColor() end
+ local native = addon.GetActiveSkinDefinition().frame.nativeToolbar == true
+ if button._toolbarNativeStyle ~= native then
+  button._toolbarNativeStyle = native
+  if native and not icon.Art then
+   local spec = nativeIcons[button._toolbarKind]
+   icon.Art = icon:CreateTexture(nil, "ARTWORK")
+   icon.Art:SetAllPoints()
+   if spec.atlas and C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(spec.atlas) then
+    icon.Art:SetAtlas(spec.atlas)
+   else
+    icon.Art:SetTexture(spec.texture)
+   end
+   if spec.crop then icon.Art:SetTexCoord(unpack(spec.crop)) end
+  end
+  if icon.Art then icon.Art:SetShown(native) end
+  for _,part in ipairs(icon.parts) do part:SetShown(not native) end
+  if native then button.ToolbarBacking:SetVertexColor(0.20,0.13,0.07,0.95)
+  else button.ToolbarBacking:SetVertexColor(0.028,0.023,0.018,0.88) end
+  button._toolbarPaintA = nil
+  T.PositionIcon(button)
+ end
  local enabled = not button.IsEnabled or button:IsEnabled()
  local active = addon.Bags.SortMode and addon.Bags.SortMode.button == button and addon.Bags.SortMode.active
  local alpha = enabled and ((button._toolbarHovered or active) and 1 or 0.88) or 0.3
@@ -161,7 +193,8 @@ function T.Update(button, r, g, b)
  if button._toolbarPaintR==r and button._toolbarPaintG==g and button._toolbarPaintB==b and button._toolbarPaintA==alpha and button._toolbarPaintActive==active and button._toolbarPaintHover==button._toolbarHovered and button._toolbarPaintPressed==button._toolbarPressed then return end
  button._toolbarPaintR,button._toolbarPaintG,button._toolbarPaintB,button._toolbarPaintA=r,g,b,alpha
  button._toolbarPaintActive,button._toolbarPaintHover,button._toolbarPaintPressed=active,button._toolbarHovered,button._toolbarPressed
- for _, part in ipairs(icon.parts) do part:SetVertexColor(r,g,b,alpha) end
+ if native then icon.Art:SetAlpha(alpha)
+ else for _, part in ipairs(icon.parts) do part:SetVertexColor(r,g,b,alpha) end end
  if button.ToolbarBorder then
   for _, edge in ipairs(button.ToolbarBorder) do edge:SetVertexColor(r,g,b,enabled and (button._toolbarHovered and 0.98 or 0.62) or 0.25) end
  end

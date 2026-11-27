@@ -294,11 +294,6 @@ addon.functions.SettingsCreateText(cat, L["ClassBuffReminderDesc"] or "Shows how
 	parentSection = expandable,
 })
 
-addon.functions.SettingsCreateInlineHint(cat, L["ClassBuffReminderEditModeHint"], {
-	id = "classBuffReminderEditModeHint",
-	parentSection = expandable,
-})
-
 
 
 

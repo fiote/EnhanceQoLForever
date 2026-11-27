@@ -2,6 +2,9 @@ local addonName, addon = ...
 
 addon.variables.NewVersionTableEQOL = {}
 
--- 13.24.4
-if addon.variables.isForever and not addon.variables.isTBC then addon.variables.NewVersionTableEQOL.navigationWaypointStrata = true end
-if not addon.variables.isTBC then addon.variables.NewVersionTableEQOL.questTrackerQuickToggles = true end
+-- 13.24.5
+addon.variables.NewVersionTableEQOL.ClassBuffReminderAdvancedSettings = true
+addon.variables.NewVersionTableEQOL.ClassBuffReminderKeybindConsumables = true
+addon.variables.NewVersionTableEQOL.Bags_nativeSkinPreset = true
+addon.variables.NewVersionTableEQOL.Bags_searchBorderColor = true
+addon.variables.NewVersionTableEQOL.Bags_searchBorderOpacity = true

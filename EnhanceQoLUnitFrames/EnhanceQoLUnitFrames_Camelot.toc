@@ -2,7 +2,7 @@
 ## X-EQOL-Flavor: forever
 ## Title: Enhance QoL Unit Frames
 ## Author: R41Z0R
-## Version: 13.24.4
+## Version: 13.24.5
 ## Notes: Custom unit, party, raid and boss frames
 ## Notes-deDE: Eigene Einheiten-, Gruppen-, Schlachtzug- und Boss-Frames
 ## Notes-esES: Marcos personalizados de unidad, grupo, banda y jefe

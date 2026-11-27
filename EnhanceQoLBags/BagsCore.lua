@@ -2370,6 +2370,13 @@ function Bags.GetAuctionSales()
 	if sales and sales:IsEnabled() then return sales end
 end
 
+function Core.GetAuctionValueIcon()
+	if C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo("Auctioneer") then
+		return CreateAtlasMarkup("Auctioneer", 16, 16)
+	end
+	return "|TInterface\\Icons\\INV_Misc_Coin_01:14:14|t"
+end
+
 function Core.GetAuctionFooter(footer, settings)
 	local button = footer.AuctionValueButton
 	local sales = settings.showAuctionValue and Bags.GetAuctionSales()
@@ -2380,6 +2387,7 @@ function Core.GetAuctionFooter(footer, settings)
 	if not button then
 		button = CreateFrame("Button", nil, footer.ExternalLeftContainer)
 		button:SetHeight(Core.FOOTER_ROW_HEIGHT)
+		button.ValueIcon = Core.GetAuctionValueIcon()
 		button.Text = button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 		button.Text:SetPoint("LEFT")
 		button:SetScript("OnClick", function()
@@ -2392,15 +2400,13 @@ function Core.GetAuctionFooter(footer, settings)
 		footer.AuctionValueButton = button
 		state.auctionValueDirty = true
 	end
-	local showDelta = settings.showAuctionValueDelta == true
-	if state.auctionValueDirty or button.showDelta ~= showDelta then
-		button.total, button.top, button.market, button.delta = sales:GetBagValue(showDelta)
-		button.showDelta = showDelta
+	if state.auctionValueDirty then
+		button.total, button.top, button.market, button.premium = sales:GetBagValue()
 		state.auctionValueDirty = false
 	end
 	button.Text:SetFont(footer.MoneyText:GetFont())
-	local amount = button.total and button.total > 0 and formatFooterMoneyString(button.total) or "—"
-	button.Text:SetText(L["vendorAuctionBagValue"] .. "  " .. amount)
+	local amount = button.premium and formatFooterMoneyString(button.premium) or "—"
+	button.Text:SetText(button.ValueIcon .. "  " .. amount)
 	button:SetWidth(math.ceil(button.Text:GetStringWidth()))
 	if GameTooltip:IsOwned(button) then Core.ShowAuctionValueTooltip(button) end
 	return button
@@ -2410,29 +2416,27 @@ function Core.ShowAuctionValueTooltip(button)
 	local tooltip = GameTooltip
 	tooltip:SetOwner(button, "ANCHOR_TOP")
 	tooltip:ClearLines()
-	local title = "|TInterface\\Icons\\INV_Misc_Coin_01:16:16|t " .. L["vendorAuctionBagValueTitle"]
-	if button.top and #button.top > 0 then
-		tooltip:AddDoubleLine(title, formatFooterMoneyString(button.total), 1, 0.82, 0, 1, 1, 1)
+	local title = button.ValueIcon .. " " .. L["vendorAuctionBagValuePremium"]
+	if button.total and button.total > 0 then
+		tooltip:AddDoubleLine(title, button.premium and formatFooterMoneyString(button.premium) or "—", 1, 0.82, 0, 1, 1, 1)
+		tooltip:AddDoubleLine(L["vendorAuctionBagValueTitle"], formatFooterMoneyString(button.total), 0.8, 0.83, 0.88, 1, 1, 1)
 		local faction = UnitFactionGroup("player")
 		local market = button.market
 		if faction == "Horde" or faction == "Alliance" then
 			market = CreateAtlasMarkup("UI-HUD-UnitFrame-Player-PVP-" .. faction .. "Icon", 14, 14) .. " " .. market
 		end
 		tooltip:AddLine(market, 0.75, 0.78, 0.84)
-		local sales = button.delta and Bags.GetAuctionSales()
-		if sales then
-			local amount, r, g, b = sales:FormatVendorDelta(button.delta, formatFooterMoneyString)
-			tooltip:AddDoubleLine(L["vendorAuctionBagValueDelta"], amount, 0.8, 0.83, 0.88, r, g, b)
-		end
-		tooltip:AddLine(" ")
-		tooltip:AddLine(L["vendorAuctionBagValueTop"], 1, 0.82, 0)
-		for _, row in ipairs(button.top) do
-			local icon = row.icon or C_Item.GetItemIconByID(row.key.itemID) or 134400
-			local name = row.link:match("|h%[(.-)%]|h") or row.link
-			local quality = row.quality and ITEM_QUALITY_COLORS[row.quality]
-			if quality then name = quality.hex .. name .. "|r" end
-			local stack = ("|T%s:16:16|t %s |cffbfc5d0×%d|r"):format(icon, name, row.count)
-			tooltip:AddDoubleLine(stack, formatFooterMoneyString(row.value), 1, 1, 1, 1, 1, 1)
+		if button.premium and #button.top > 0 then
+			tooltip:AddLine(" ")
+			tooltip:AddLine(L["vendorAuctionBagValueTop"], 1, 0.82, 0)
+			for _, row in ipairs(button.top) do
+				local icon = row.icon or C_Item.GetItemIconByID(row.key.itemID) or 134400
+				local name = row.link:match("|h%[(.-)%]|h") or row.link
+				local quality = row.quality and ITEM_QUALITY_COLORS[row.quality]
+				if quality then name = quality.hex .. name .. "|r" end
+				local stack = ("|T%s:16:16|t %s |cffbfc5d0×%d|r"):format(icon, name, row.count)
+				tooltip:AddDoubleLine(stack, formatFooterMoneyString(row.premium), 1, 1, 1, 1, 1, 1)
+			end
 		end
 	else
 		tooltip:SetText(title)
@@ -7041,11 +7045,32 @@ local function processUpdate()
 	else
 		state.nativeBagFiltersResetForOneBag = false
 	end
-	if shouldBeVisible then
-		flushStaleBagsForContentDecision()
-		if state.newItemsVisualDirty and not state.pendingRebuild and not isOneBagMode(settings) and Core.HaveNewItemCategoriesChanged() then
-			state.pendingRebuild = true
-		end
+	if shouldBeVisible then flushStaleBagsForContentDecision() end
+	local autoClear = Bags.NewItemAutoClear
+	local autoClearEnabled = settings.newItemsAutoClearDelay and autoClear.GetDelay(settings) >= 0
+	if not state.newItemAutoClear and shouldBeVisible and autoClearEnabled then
+		state.newItemAutoClear = autoClear.Create({
+			firstBag = Core.BACKPACK_ID,
+			lastBag = Core.LAST_CHARACTER_BAG_ID,
+			getIdentity = getOpenSessionNewItemIdentity,
+			isNew = isOpenSessionNewItem,
+			clearSlot = clearOpenSessionNewItemSlot,
+			getSettings = getSettings,
+			isEnabled = Bags.IsEnabled,
+			requestRefresh = function()
+				state.newItemsVisualDirty = true
+				scheduleUpdate(true, true)
+			end,
+		})
+	end
+	if state.newItemAutoClear and autoClear.Update(state.newItemAutoClear, settings, shouldBeVisible, openingFrame or state.newItemsVisualDirty or state.pendingRebuild) then
+		state.newItemsVisualDirty = true
+		state.pendingRebuild = true
+		state.pendingRefresh = true
+	end
+	if shouldBeVisible and (state.newItemsVisualDirty or (openingFrame and autoClearEnabled)) and not state.pendingRebuild
+		and not isOneBagMode(settings) and Core.HaveNewItemCategoriesChanged() then
+		state.pendingRebuild = true
 	end
 	local needsRebuild = state.pendingRebuild
 		or state.layoutData == nil

@@ -48,9 +48,6 @@ local GET_BAG_ITEM_TOOLTIP = C_TooltipInfo and C_TooltipInfo.GetBagItem
 local EQUIPMENT_SET_OVERLAY_FALLBACK_TEXTURE = "Interface\\PaperDollInfoFrame\\UI-EquipmentManager-Toggle"
 local CONSUMABLE_CLASS_ID = 0
 local CONSUMABLE_OTHER_SUBCLASS_ID = 8
-local LEARN_TRANSMOG_SET_TOOLTIP_LINE_TYPE = 39
-local TOY_TOOLTIP_LINE_TYPE = 0
-local KNOWN_SPELL_TOOLTIP_LINE_TYPE = 43
 
 local FREE_SLOTS_SECTION_ID = "warbandFreeSlots"
 local FREE_SLOTS_DEFINITION = {
@@ -2314,46 +2311,7 @@ local function getTooltipDerivedItemFlags(bagID, slotID, info, runtimeContext)
 	flags.isBound = isBound
 	flags.quality = quality
 	flags.iconFileID = iconFileID
-	flags.isToy = false
-	flags.isKnownToy = false
-	flags.isTransmogSet = false
-	flags.isPvpItem = false
-	flags.hasUsageRequirement = false
-
-	local toyText = _G.TOY
-	local knownText = ITEM_SPELL_KNOWN
-	local hasToyLine = false
-	local hasKnownLine = false
-	local function isUnusableLineColor(line)
-		local color = line and line.leftColor
-		if type(color) ~= "table" then return false end
-		local r = color and (color.r or color[1])
-		local g = color and (color.g or color[2])
-		local b = color and (color.b or color[3])
-		return r and g and b and r >= 0.9 and g <= 0.25 and b <= 0.25
-	end
-	for index = 1, #lines do
-		local line = lines[index]
-		if line then
-			local lineType = line.type
-			if lineType == LEARN_TRANSMOG_SET_TOOLTIP_LINE_TYPE then
-				flags.isTransmogSet = true
-			elseif toyText and lineType == TOY_TOOLTIP_LINE_TYPE and line.leftText == toyText then
-				hasToyLine = true
-			elseif state.pvpItemTooltipPattern and lineType == 0 and line.leftText and line.leftText:match(state.pvpItemTooltipPattern) then
-				flags.isPvpItem = true
-			elseif lineType == KNOWN_SPELL_TOOLTIP_LINE_TYPE then
-				if knownText and line.leftText == knownText then
-					hasKnownLine = true
-				elseif isUnusableLineColor(line) then
-					flags.hasUsageRequirement = true
-				end
-			end
-		end
-	end
-
-	flags.isToy = hasToyLine
-	flags.isKnownToy = hasToyLine and hasKnownLine or false
+	Bags.functions.ReadBankItemTooltipFlags(lines, flags, state.pvpItemTooltipPattern)
 
 	if persistentCache then
 		if not persistentBagCache then
@@ -2577,44 +2535,6 @@ local function isRuleUpgradeItem(equipLoc, itemLevel, recommendedForSpec, runtim
 	return baselineLevel ~= nil and itemLevel > baselineLevel
 end
 
-local function getDefaultCategoryForItem(info, questInfo, equipLoc, classID)
-	if questInfo and (questInfo.isQuestItem or questInfo.questID) then
-		return "quest"
-	end
-
-	local itemRef = info and (info.hyperlink or info.itemID)
-	if not itemRef then
-		return "misc"
-	end
-
-	equipLoc = equipLoc or select(4, C_Item.GetItemInfoInstant(itemRef))
-	classID = classID or select(6, C_Item.GetItemInfoInstant(itemRef))
-
-	if C_Item and C_Item.IsCosmeticItem then
-		local ok, isCosmetic = pcall(C_Item.IsCosmeticItem, itemRef)
-		if ok and isCosmetic then
-			return "equipment"
-		end
-	end
-
-	if equipLoc and equipLoc ~= "" and not IGNORED_ITEM_LEVEL_EQUIP_LOCS[equipLoc] then
-		return "equipment"
-	end
-
-	local itemClass = Enum and Enum.ItemClass or {}
-	if classID == itemClass.Weapon or classID == itemClass.Armor then
-		return "equipment"
-	elseif classID == itemClass.Consumable then
-		return "consumables"
-	elseif classID == itemClass.Tradegoods then
-		return "tradegoods"
-	elseif classID == itemClass.Recipe then
-		return "recipes"
-	end
-
-	return "misc"
-end
-
 local function shouldCombineDuplicateItem(itemRef, settings)
 	if not itemRef or not settings or not settings.combineUnstackableItems
 		or (Bags.Core and Bags.Core.IsStackCombineSuspended and Bags.Core.IsStackCombineSuspended()) then
@@ -2792,19 +2712,11 @@ local function sortLayoutSections(layoutData)
 		return
 	end
 
-	local builtinSectionSortModes = {
-		equipment = "itemLevel",
-		consumables = "count",
-		tradegoods = "count",
-		recipes = "quality",
-		quest = "quality",
-		misc = "quality",
-	}
 	state.sortDataPass = (state.sortDataPass or 0) + 1
 	local sortDataPass = state.sortDataPass
 
 	local function getResolvedSectionSortMode(sectionDefinition)
-		return addon.ResolveCategorySortMode(sectionDefinition, builtinSectionSortModes)
+		return addon.ResolveCategorySortMode(sectionDefinition, Bags.ItemRules.bankBuiltinSortModes)
 	end
 
 	local function prepareMappingSortData(mapping, sortMode)
@@ -2965,7 +2877,7 @@ local function resolveCategoryForItem(bagID, slotID, info, questInfo, settings, 
 		if itemRef then
 			_, _, _, equipLoc, _, classID, subClassID = C_Item.GetItemInfoInstant(itemRef)
 		end
-		local defaultCategory = getDefaultCategoryForItem(info, questInfo, equipLoc, classID)
+		local defaultCategory = Bags.ItemRules.GetBankDefaultCategory(info.hyperlink or info.itemID, questInfo, equipLoc, classID)
 		sectionID = addon.NormalizeCategorySectionID and addon.NormalizeCategorySectionID(defaultCategory) or defaultCategory
 
 		if hasCustomCategories and addon.GetMatchingCustomCategoryID then
@@ -3809,9 +3721,7 @@ local function updateButtonData(button, mapping, overlayRuntime, textAppearance,
 	local questIsActive = questInfo and questInfo.isActive or false
 	local isNewItem = isNewItemAtSlot(bagID, slotID)
 	local tooltipFlags = texture and getTooltipDerivedItemFlags(bagID, slotID, info) or nil
-	local isKnownToy = tooltipFlags and tooltipFlags.isKnownToy or false
-	local hasUsageRequirement = tooltipFlags and tooltipFlags.hasUsageRequirement or false
-	local isUnusableRecipe = (texture and Bags.functions.IsItemUnusableByPlayer and Bags.functions.IsItemUnusableByPlayer(itemID, itemLink) or false) or isKnownToy or hasUsageRequirement
+	local isUnusableRecipe = Bags.functions.IsBankItemUnusable(texture and itemID or nil, itemLink, tooltipFlags)
 	local freeSlotGroup = mapping and mapping.freeSlotGroup or nil
 	local freeSlotSignature = getFreeSlotRenderSignature(freeSlotGroup)
 	overlayRuntime = overlayRuntime or getOverlayRuntimeConfig()

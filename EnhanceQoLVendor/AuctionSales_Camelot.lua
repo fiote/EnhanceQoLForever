@@ -1247,7 +1247,7 @@ local function getBagRows(rows, market)
 	end)
 end
 
-function Sales:GetBagValue(includeVendorDelta)
+function Sales:GetBagValue()
 	if not self:IsEnabled() then return end
 	local market, faction = factionMarket()
 	if not market then return end
@@ -1255,18 +1255,30 @@ function Sales:GetBagValue(includeVendorDelta)
 	if not (db and db[market]) and not (prices and prices[market]) then return end
 	local rows = {}
 	getBagRows(rows, market)
-	local total, top = 0, {}
-	local vendorTotal = includeVendorDelta and 0 or nil
+	local total, premium, top = 0, 0, {}
+	local hasVendorPrices = true
 	for _, row in ipairs(rows) do
 		if row.value <= 0 then break end
 		total = total + row.value
-		if #top < 5 then top[#top + 1] = row end
-		if vendorTotal then
-			local unitPrice = select(11, C_Item.GetItemInfo(row.link))
-			vendorTotal = unitPrice and vendorTotal + unitPrice * row.count or nil
+		local unitPrice = select(11, C_Item.GetItemInfo(row.link))
+		if (issecretvalue and issecretvalue(unitPrice)) or type(unitPrice) ~= "number" then
+			hasVendorPrices = false
+		else
+			local gain = row.value - unitPrice * row.count
+			if gain > 0 then
+				premium = premium + gain
+				row.premium = gain
+				top[#top + 1] = row
+			end
 		end
 	end
-	return total, top, marketLabel(faction), vendorTotal and total - vendorTotal or nil
+	table.sort(top, function(a, b)
+		if a.premium ~= b.premium then return a.premium > b.premium end
+		if a.bag ~= b.bag then return a.bag < b.bag end
+		return a.slot < b.slot
+	end)
+	for index = #top, 6, -1 do top[index] = nil end
+	return total, top, marketLabel(faction), hasVendorPrices and total > 0 and premium or nil
 end
 
 function Sales:ReadResults(event, arg)
@@ -2485,6 +2497,7 @@ end
 
 function Sales:BuildPanel()
 	local panel = auctionWindow("EnhanceQoLAuctionSalesFrame", L["vendorAuctionSales"])
+	panel.CloseButton:SetScript("OnClick", function() panel:Hide() end)
 	panel:SetFrameStrata("DIALOG")
 	panel:SetSize(panelWidth, panelHeight)
 	panel:SetClampedToScreen(true)
@@ -2610,7 +2623,11 @@ function Sales:BuildPanel()
 	panel.sellOne:SetPoint("RIGHT", panel.quickButton, "LEFT", -6, 0)
 	panel.quickKeys = CreateFrame("Frame", nil, panel)
 	panel.quickKeys:SetScript("OnKeyDown", function(keys, key)
-		local active = self.quick and not InCombatLockdown() and not GetCurrentKeyBoardFocus() and not nativeDialogOpen()
+		if InCombatLockdown() then
+			keys:EnableKeyboard(false)
+			return
+		end
+		local active = self.quick and not GetCurrentKeyBoardFocus() and not nativeDialogOpen()
 		local handle = active and not IsModifierKeyDown() and (key == "SPACE" or key == "ESCAPE")
 		keys:SetPropagateKeyboardInput(not handle)
 		if not handle then return end
@@ -2624,6 +2641,7 @@ function Sales:BuildPanel()
 	panel.quickKeys:SetScript("OnKeyUp", function(keys, key)
 		if key == "SPACE" then keys.spaceDown = nil end
 	end)
+	panel.quickKeys:EnableKeyboard(false)
 
 	local sell = tab(panel, _G.AUCTION_HOUSE_FRAME_TITLE_SELL, 107, function() self:SetMode("sell") end)
 	sell:SetPoint("TOPLEFT", 14, -52)

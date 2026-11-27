@@ -2,6 +2,18 @@ local addon = _G.EnhanceQoL
 local Reminder = addon and addon.ClassBuffReminder
 if not Reminder then return end
 
+local function getConsumableMacro(entry)
+	local itemId = tonumber(entry.itemId)
+	if not itemId or itemId <= 0 then return nil end
+	local kind = entry.sourceKind
+	local useItem = "/use [nocombat] item:" .. itemId
+	if kind == "FOOD" or kind == "FLASK" or kind == "FOREVER_FOOD" then return useItem end
+	if kind == "WEAPON_BUFF_MAINHAND" or kind == "WEAPON_BUFF_OFFHAND" then
+		local slot = tonumber(entry.actionInventorySlot)
+		if slot == (_G.INVSLOT_MAINHAND or 16) or slot == (_G.INVSLOT_OFFHAND or 17) then return useItem .. "\n/use [nocombat] " .. slot end
+	end
+end
+
 function Reminder:UpdateSelfBuffBinding(provider, entries, primary)
 	if InCombatLockdown and InCombatLockdown() then return end
 	local button = _G.EQOLSelfBuffReminderButton
@@ -11,8 +23,15 @@ function Reminder:UpdateSelfBuffBinding(provider, entries, primary)
 		button:SetAttribute("pressAndHoldAction", true)
 	end
 	local spell, unit, groupSpell, groupUnit
+	local consumableMacro
+	local includeConsumables = addon.db and addon.db.classBuffReminderKeybindConsumables == true
 	local function consider(entry)
-		if type(entry) ~= "table" or not entry.actionSpellId or entry.itemId or entry.actionInventorySlot or entry.actionPetSlot then return end
+		if type(entry) ~= "table" then return end
+		if entry.itemId then
+			if includeConsumables and not consumableMacro then consumableMacro = getConsumableMacro(entry) end
+			return
+		end
+		if not entry.actionSpellId or entry.actionInventorySlot or entry.actionPetSlot then return end
 		local kind = entry.sourceKind
 		if kind and not kind:match("^CUSTOM_BUFF_") and not kind:match("^PALADIN_BLESSING_") then return end
 		local actionUnit = entry.actionUnit
@@ -42,7 +61,9 @@ function Reminder:UpdateSelfBuffBinding(provider, entries, primary)
 		consider(primary)
 	end
 	spell, unit = spell or groupSpell, unit or groupUnit
-	button:SetAttribute("type1", spell and "spell" or nil)
+	if spell then consumableMacro = nil end
 	button:SetAttribute("spell1", spell)
 	button:SetAttribute("unit1", unit)
+	button:SetAttribute("macrotext1", consumableMacro)
+	button:SetAttribute("type1", spell and "spell" or (consumableMacro and "macro") or nil)
 end

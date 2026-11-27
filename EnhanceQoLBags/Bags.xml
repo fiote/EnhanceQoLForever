@@ -2,6 +2,7 @@
 	<Script file="Init.lua" />
 	<Script file="ItemInfoTooltip.lua" />
 	<Script file="Skins.lua" />
+	<Script file="NewItemAutoClear.lua" />
 	<Script file="Toolbar.lua" />
 	<Script file="Header.lua" />
 	<Script file="ToolbarEditor.lua" />

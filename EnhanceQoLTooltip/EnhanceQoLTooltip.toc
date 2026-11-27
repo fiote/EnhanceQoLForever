@@ -2,7 +2,7 @@
 ## X-EQOL-Flavor: forever
 ## Title: Enhance QoL Tooltip
 ## Author: R41Z0R
-## Version: 13.24.4
+## Version: 13.24.5
 ## Notes: Tooltip IDs, visibility, realm and character details
 ## Notes-deDE: Tooltip-IDs, Sichtbarkeit, Realm- und Charakterdetails
 ## Notes-esES: ID de tooltips, visibilidad y detalles de reino y personaje

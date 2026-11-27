@@ -2,8 +2,45 @@
 local _, addon = ...
 
 addon.GeneratedChangelog = {
-	sourceTag = "13.24.4",
+	sourceTag = "13.24.5",
 	releases = {
+		{
+			tag = "13.24.5",
+			date = "2026-11-27",
+			sections = {
+				{
+					title = "Added",
+					items = {
+						"Browse saved banks across characters by ruleset and faction, search stored items with non-matches dimmed, and see how many slots are free.",
+						"Bags: Set a delay to clear New Items automatically.",
+						"Bags: Choose the Classic Metal skin with its high-contrast close button and matching free-slot artwork in bags and bank, and customize the search field's border color and opacity.",
+						"Class Buff Reminder: Toggle solo reminders and open advanced settings from the Settings Center.",
+						"Class Buff Reminder: The buff keybind can optionally use tracked food and weapon oils or stones.",
+						"Floating Loot can grow upward or downward from its anchor.",
+					},
+				},
+				{
+					title = "Changed",
+					items = {
+						"The saved bank uses the live bank layout, sizes itself to its contents, shows the snapshot time in the footer, and marks unusable items in red.",
+						"The mail address book uses a native window frame, with a full-width search field, one column for full character names, and separate messages for an empty list and a search with no matches.",
+						"Drag the mail address book without holding Shift. It opens to the right of the mail window each time.",
+						"The bag footer uses the Auctioneer icon and shows the estimated gain over vendor prices before auction fees. The tooltip shows the same estimate alongside the total auction value.",
+					},
+				},
+				{
+					title = "Fixed",
+					items = {
+						"The mail address book rebuilds as you log into your characters and shows only contacts from your current ruleset and faction.",
+						"The saved bank shows purchased bank bag slots as available even when no bag is equipped.",
+						"Close Auction Sales in combat from the window or the bag footer.",
+						"Bags: The search field keeps its selected style at full opacity, and free slots show their icon with custom icon shapes.",
+						"The saved bank closes in combat when you click its close button.",
+						"Instant Messenger skips character lookups while chat messaging is restricted.",
+					},
+				},
+			},
+		},
 		{
 			tag = "13.24.4",
 			date = "2026-11-26",

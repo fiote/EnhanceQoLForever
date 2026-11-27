@@ -16,7 +16,12 @@
 	<Script file="Ignore/Ignore.lua" />
 	<Include file="Ignore/Ignore_Camelot.xml" />
 	<Script file="Mailbox.lua" />
-	<Include file="Mailbox_Camelot.xml" />
+	<Include file="Mailbox.xml" />
+	<Frame name="EQOLMailboxFrame" inherits="PortraitFrameTemplate, EQOLMailboxLayoutTemplate" parent="MailFrame">
+		<Scripts>
+			<OnLoad inherit="prepend">EQOLMailboxFrame_OnLoad(self, true);</OnLoad>
+		</Scripts>
+	</Frame>
 	<Script file="ChatControlVisibility.lua" />
 	<Script file="Settings_ChatFrame.lua" />
 	<Script file="Settings_Social.lua" />

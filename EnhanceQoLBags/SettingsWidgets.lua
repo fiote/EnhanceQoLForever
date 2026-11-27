@@ -100,7 +100,9 @@ function UI.CreateNumeric(parent, spec)
 		local value = UI.NormalizeNumber(spec, spec.get and spec.get() or spec.min) or spec.min
 		self.updating = true
 		slider:SetValue(value)
-		if not input:HasFocus() then input:SetText(tostring(value) .. (spec.suffix or "")) end
+		if not input:HasFocus() then
+			input:SetText(spec.format and spec.format(value) or tostring(value) .. (spec.suffix or ""))
+		end
 		local enabled = self.featureEnabled ~= false and (not spec.enabled or spec.enabled())
 		UI.SetWidgetEnabled(slider, enabled)
 		UI.SetWidgetEnabled(input, enabled)
@@ -133,11 +135,41 @@ function UI.CreateNumeric(parent, spec)
 	end
 	input:SetScript("OnEnterPressed", function() commitInput(); input:ClearFocus() end)
 	input:SetScript("OnEditFocusLost", commitInput)
+	if spec.format then
+		input:HookScript("OnEditFocusGained", function() input:SetText(tostring(slider:GetValue())) end)
+	end
 	input:SetScript("OnEscapePressed", function() control.updating = true; input:ClearFocus(); control.updating = false; control:Sync() end)
 	UI.StyleInput(input)
 	if not UI.IsToolbar(control) then input:SetTextInsets(6,6,0,0) end
 	control:Sync()
 	return control
+end
+
+function UI.CreateNewItemsAutoClear(page)
+	local row = CreateFrame("Frame", nil, page.Content)
+	row.Label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+	row.Label:SetText(L["settingsNewItemsAutoClearDelay"])
+	row.Hint = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	row.Hint:SetText(L["settingsNewItemsAutoClearDelayDesc"])
+	local editor = CreateFrame("Frame", nil, row)
+	editor:SetHeight(24)
+	row.Editor = editor
+	row.Numeric = UI.CreateNumeric(editor, {
+		min = -1, max = 60, step = 1,
+		get = function() return addon.Bags.NewItemAutoClear.GetDelay(addon.GetSettings()) end,
+		set = function(value)
+			addon.GetSettings().newItemsAutoClearDelay = value
+			local request = addon.Bags.functions.RequestLayoutUpdate
+			if request then request(false, true) end
+		end,
+		format = function(value)
+			if value < 0 then return L["Off"] end
+			if value == 0 then return L["settingsNewItemsAutoClearInstant"] end
+			return tostring(value)
+		end,
+		enabled = function() return not addon.GetOneBagMode() and addon.GetShowNewItems() end,
+	})
+	page.NewItemsAutoClear = row
 end
 
 function UI.AttachNumeric(parent, spec)
@@ -378,6 +410,8 @@ UI.pageLabels = { layout = "settingsCategoryLayout", categories = "settingsCateg
 
 function UI.TargetTab(key)
 	for _, pair in ipairs(UI.appearance) do if pair[1] == key or pair[2] == key then return "appearance" end end
+	local header = addon.Bags.Header
+	for _, pair in ipairs(header and header.rows or {}) do if pair[1] == key or pair[2] == key then return "appearance" end end
 	for _, pair in ipairs(UI.typography) do if pair[1] == key or pair[2] == key then return "text" end end
 	if key:find("Text", 1, true) or key:find("SubcategoryFull", 1, true) then return "text" end
 	for _, word in ipairs({ "Padding", "FrameScale", "ItemScale", "MaxColumns", "BankMaxColumns" }) do if key:find(word, 1, true) then return "size" end end

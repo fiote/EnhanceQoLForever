@@ -1840,9 +1840,6 @@ refreshFooterPage = function(page, settings)
 	page.ShowFooterSlotSummary:SetChecked(settings.showFooterSlotSummary)
 	if page.ShowAuctionValue then
 		page.ShowAuctionValue:SetChecked(settings.showAuctionValue == true)
-		page.ShowAuctionValueDelta:SetChecked(settings.showAuctionValueDelta == true)
-		page.ShowAuctionValueDelta:SetEnabled(settings.showAuctionValue == true)
-		page.ShowAuctionValueDelta.Label:SetAlpha(settings.showAuctionValue == true and 1 or 0.65)
 	end
 	if page.FooterSummaryPaddingValue then
 		local padding = addon.GetFooterSummaryPadding and addon.GetFooterSummaryPadding() or 0
@@ -3209,6 +3206,8 @@ local function createLayoutPage(parent)
 			end
 		end
 	)
+
+	addon.Bags.SettingsNavigation.CreateNewItemsAutoClear(page)
 
 	page.CompactCategoryLayout = createCheckbox(
 		contentParent,
@@ -4678,12 +4677,8 @@ local function createFooterPage(parent)
 	)
 
 	if addon.variables.isForever then
-		page.ShowAuctionValue = createCheckbox(page, L["vendorAuctionBagValueTitle"], L["vendorAuctionBagValueDesc"], 0, -192, function(value)
+		page.ShowAuctionValue = createCheckbox(page, L["vendorAuctionBagValuePremium"], L["vendorAuctionBagValueDesc"], 0, -192, function(value)
 			setAuctionValueOption("showAuctionValue", value)
-			refreshConfigCenterLayout()
-		end)
-		page.ShowAuctionValueDelta = createCheckbox(page, L["vendorAuctionBagValueDelta"], L["vendorAuctionBagValueDeltaDesc"], 0, -222, function(value)
-			setAuctionValueOption("showAuctionValueDelta", value)
 			refreshConfigCenterLayout()
 		end)
 	end
@@ -5263,10 +5258,8 @@ applyFooterPageMode = function(page)
 	if page.ShowAuctionValue then
 		local available = hasAuctionSales()
 		page.ShowAuctionValue:SetShown(available)
-		page.ShowAuctionValueDelta:SetShown(available)
 		page.ShowAuctionValue.Label:SetShown(available)
-		page.ShowAuctionValueDelta.Label:SetShown(available)
-		page.TrackedCharactersCard:SetPoint("TOPLEFT", available and page.ShowAuctionValueDelta or page.ShowFooterSlotSummary, "BOTTOMLEFT", 0, -28)
+		page.TrackedCharactersCard:SetPoint("TOPLEFT", available and page.ShowAuctionValue or page.ShowFooterSlotSummary, "BOTTOMLEFT", 0, -28)
 	end
 	if page.TrackedCharactersCard then
 		page.TrackedCharactersCard:SetShown(not basicMode)
@@ -6020,7 +6013,7 @@ local function registerModernBagsSettings()
 
 
 	registerSectionHeader(layoutPageID, "layout", "layoutLookHeader", L["settingsBasicLookTitle"] or "Look", 400)
-	registerDropdown(layoutPageID, "layout", "skinPreset", "settingsSkinPresetLabel", nil, function() return addon.GetSkinPreset and addon.GetSkinPreset() or "default" end, addon.SetSkinPreset, addon.GetSkinPresetOptions, { default = "default", order = 410, after = function() requestAndRefresh("layout", true) end })
+	registerDropdown(layoutPageID, "layout", "skinPreset", "settingsSkinPresetLabel", nil, function() return addon.GetSkinPreset and addon.GetSkinPreset() or "default" end, addon.SetSkinPreset, addon.GetSkinPresetOptions, { default = "default", order = 410, newTagID = "Bags_nativeSkinPreset", after = function() requestAndRefresh("layout", true) end })
 	Bags.Toolbar.RegisterEditor(app, layoutPageID)
 	Bags.Header.RegisterSettings(app,layoutPageID)
 	registerToggle(layoutPageID, "toolbar", "toolbarCustomColor", "settingsToolbarCustomColor", "settingsToolbarCustomColorDesc", Bags.Toolbar.GetUseCustomColor, Bags.Toolbar.SetUseCustomColor, { default = false, order = 20, newTagID = "Bags_toolbarCustomColor", after = function() requestAndRefresh("layout", false) end })
@@ -6299,7 +6292,7 @@ function Bags.functions.RegisterAuctionValueSettings()
 		groupID = anchor.groupID,
 		groupTitle = anchor.groupTitle,
 		type = "toggle",
-		label = L["vendorAuctionBagValueTitle"],
+		label = L["vendorAuctionBagValuePremium"],
 		description = L["vendorAuctionBagValueDesc"],
 		default = false,
 		order = anchor.order + 0.2,
@@ -6307,21 +6300,6 @@ function Bags.functions.RegisterAuctionValueSettings()
 		isEnabled = hasAuctionSales,
 		getValue = function() return getSettings().showAuctionValue == true end,
 		setValue = function(value) setAuctionValueOption("showAuctionValue", value) end,
-	})
-	app:RegisterControl(anchor.pageID, {
-		id = "vendorAuctionBagFooterDelta",
-		newTagID = "vendorAuctionBagFooterDelta",
-		groupID = anchor.groupID,
-		groupTitle = anchor.groupTitle,
-		type = "toggle",
-		label = L["vendorAuctionBagValueDelta"],
-		description = L["vendorAuctionBagValueDeltaDesc"],
-		default = false,
-		order = anchor.order + 0.3,
-		visibleWhen = visible,
-		isEnabled = function() return hasAuctionSales() and getSettings().showAuctionValue == true end,
-		getValue = function() return getSettings().showAuctionValueDelta == true end,
-		setValue = function(value) setAuctionValueOption("showAuctionValueDelta", value) end,
 	})
 end
 

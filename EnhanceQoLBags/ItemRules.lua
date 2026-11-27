@@ -4,6 +4,61 @@ local M = { version = 1, listeners = {}, snapshots = {}, requested = {}, request
 addon.Bags.ItemRules = M
 function addon.GetCategoryFilterContext() return { consumer = "bags", mode = "category" } end
 
+M.bankBuiltinSortModes = {
+	equipment = "itemLevel",
+	consumables = "count",
+	tradegoods = "count",
+	recipes = "quality",
+	quest = "quality",
+	misc = "quality",
+}
+
+local IGNORED_ITEM_LEVEL_EQUIP_LOCS = {
+	[""] = true,
+	INVTYPE_BAG = true,
+	INVTYPE_BODY = true,
+	INVTYPE_NON_EQUIP_IGNORE = true,
+	INVTYPE_QUIVER = true,
+	INVTYPE_TABARD = true,
+}
+
+function M.GetBankDefaultCategory(itemRef, questInfo, equipLoc, classID)
+	if questInfo and (questInfo.isQuestItem or questInfo.questID) then
+		return "quest"
+	end
+
+	if not itemRef then
+		return "misc"
+	end
+
+	equipLoc = equipLoc or select(4, C_Item.GetItemInfoInstant(itemRef))
+	classID = classID or select(6, C_Item.GetItemInfoInstant(itemRef))
+
+	if C_Item and C_Item.IsCosmeticItem then
+		local ok, isCosmetic = pcall(C_Item.IsCosmeticItem, itemRef)
+		if ok and isCosmetic then
+			return "equipment"
+		end
+	end
+
+	if equipLoc and equipLoc ~= "" and not IGNORED_ITEM_LEVEL_EQUIP_LOCS[equipLoc] then
+		return "equipment"
+	end
+
+	local itemClass = Enum and Enum.ItemClass or {}
+	if classID == itemClass.Weapon or classID == itemClass.Armor then
+		return "equipment"
+	elseif classID == itemClass.Consumable then
+		return "consumables"
+	elseif classID == itemClass.Tradegoods then
+		return "tradegoods"
+	elseif classID == itemClass.Recipe then
+		return "recipes"
+	end
+
+	return "misc"
+end
+
 local function copy(value)
 	if _G.issecretvalue and _G.issecretvalue(value) then return nil end
 	if type(value) ~= "table" then return value end

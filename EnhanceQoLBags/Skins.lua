@@ -17,6 +17,7 @@ local L = addon.L or {}
 
 local SKIN_PRESET_ORDER = {
 	"default",
+	"native",
 	"adventure",
 	"midnight",
 }
@@ -98,6 +99,53 @@ Bags.functions.IsItemUnusableByPlayer = Bags.functions.IsItemUnusableByPlayer
 		return C_PlayerInfo.CanUseItem(numericItemID) == false
 	end
 
+function Bags.functions.ReadBankItemTooltipFlags(lines, flags, pvpItemTooltipPattern)
+	local textLineType, learnTransmogSetLineType, knownSpellLineType = 0, 39, 43
+	flags.isTransmogSet = false
+	flags.isPvpItem = false
+	flags.hasUsageRequirement = false
+
+	local toyText = _G.TOY
+	local knownText = ITEM_SPELL_KNOWN
+	local hasToyLine = false
+	local hasKnownLine = false
+	local function isUnusableLineColor(line)
+		local color = line and line.leftColor
+		if type(color) ~= "table" then return false end
+		local r = color and (color.r or color[1])
+		local g = color and (color.g or color[2])
+		local b = color and (color.b or color[3])
+		return r and g and b and r >= 0.9 and g <= 0.25 and b <= 0.25
+	end
+	for index = 1, #lines do
+		local line = lines[index]
+		if line then
+			local lineType = line.type
+			if lineType == learnTransmogSetLineType then
+				flags.isTransmogSet = true
+			elseif toyText and lineType == textLineType and line.leftText == toyText then
+				hasToyLine = true
+			elseif pvpItemTooltipPattern and lineType == textLineType and line.leftText and line.leftText:match(pvpItemTooltipPattern) then
+				flags.isPvpItem = true
+			elseif lineType == knownSpellLineType then
+				if knownText and line.leftText == knownText then
+					hasKnownLine = true
+				elseif isUnusableLineColor(line) then
+					flags.hasUsageRequirement = true
+				end
+			end
+		end
+	end
+
+	flags.isToy = hasToyLine
+	flags.isKnownToy = hasToyLine and hasKnownLine or false
+	return flags
+end
+
+function Bags.functions.IsBankItemUnusable(itemID, itemLink, tooltipFlags)
+	return Bags.functions.IsItemUnusableByPlayer(itemID, itemLink) or (tooltipFlags and (tooltipFlags.isKnownToy or tooltipFlags.hasUsageRequirement)) or false
+end
+
 Bags.functions.ApplyItemUsabilityVisual = Bags.functions.ApplyItemUsabilityVisual
 	or function(button, isUnusableRecipe)
 		if not button then
@@ -141,6 +189,9 @@ local function buildDefinition(label, colors)
 			backdropColor = copyColor(colors.backdropColor),
 			borderAtlas = "questlog-frame",
 			borderColor = copyColor(colors.borderColor),
+			borderTexture = colors.borderTexture,
+			headerColor = colors.headerColor,
+			nativeToolbar = colors.nativeToolbar,
 			dividerColor = copyColor(colors.dividerColor),
 			titleColor = copyColor(colors.titleColor),
 			toolbarColor = copyColor(colors.toolbarColor or colors.titleColor),
@@ -183,6 +234,22 @@ local SKIN_PRESET_DEFINITIONS = {
 		itemBorderColor = { 0.42, 0.39, 0.27, 1.00 },
 		itemHighlightColor = { 1.00, 1.00, 1.00, 0.15 },
 		itemPushedColor = { 0.00, 0.00, 0.00, 0.26 },
+	}),
+	native = buildDefinition("Native", {
+		backdropColor = { 0.08, 0.065, 0.045, 0.94 },
+		borderTexture = "Interface\\DialogFrame\\UI-DialogBox-Border",
+		borderColor = { 0.80, 0.69, 0.49, 1 },
+		headerColor = { 0.22, 0.15, 0.09, 0.92 },
+		nativeToolbar = true,
+		dividerColor = { 0.76, 0.60, 0.38, 0.28 },
+		titleColor = { 1, 0.84, 0.45, 1 },
+		toolbarColor = { 0.75, 0.60, 0.38, 1 },
+		accentColor = { 0.86, 0.70, 0.42, 1 },
+		sectionHighlightColor = { 0.95, 0.78, 0.50, 0.10 },
+		assignBackdropColor = { 0.17, 0.12, 0.07, 0.94 },
+		assignBorderColor = { 0.80, 0.66, 0.40, 1 },
+		assignPlusColor = { 1, 0.84, 0.45, 1 },
+		iconShape = "default",
 	}),
 	adventure = buildDefinition("Adventure", {
 		backdropColor = { 0.08, 0.06, 0.03, 0.60 },
@@ -752,6 +819,9 @@ local function resetItemButtonShape(button, qualityOverride, qualityOverrideProv
 	if button.BagsShapeBorder then
 		button.BagsShapeBorder:Hide()
 	end
+	if button.BagsShapeSlotArtwork then
+		button.BagsShapeSlotArtwork:Hide()
+	end
 	button._bagsShapeMaskTexture = nil
 
 	if button.BagsDefaultFreeSlotBackground then
@@ -976,9 +1046,34 @@ local function applyCustomItemButtonShape(button, skinDefinition, shapeDefinitio
 	button.emptyBackgroundAtlas = nil
 	button.emptyBackgroundTexture = nil
 
-	if button.ItemSlotBackground then
-		button.ItemSlotBackground:Hide()
-		clearTextureMask(button.ItemSlotBackground)
+	local slotBackground = button.ItemSlotBackground
+	if slotBackground then
+		slotBackground:Hide()
+		clearTextureMask(slotBackground)
+	end
+
+	if not renderTexture and button._bagsFreeSlotDisplayMode == "icons" then
+		local artwork = button.BagsShapeSlotArtwork
+		if not artwork then
+			artwork = button:CreateTexture(nil, "ARTWORK", nil, -2)
+			button.BagsShapeSlotArtwork = artwork
+		end
+		local atlas = (slotBackground and slotBackground.GetAtlas and slotBackground:GetAtlas()) or button._bagsDefaultEmptyBackgroundAtlas
+		if not slotBackground and not (addon.variables and addon.variables.isTBC)
+			and C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo("bags-item-slot64") then
+			atlas = "bags-item-slot64"
+		end
+		local texture = not atlas and ((slotBackground and slotBackground:GetTexture()) or button._bagsDefaultEmptyBackgroundTexture
+			or "Interface\\Buttons\\UI-EmptySlot-Disabled") or nil
+		if artwork._bagsSlotAtlas ~= atlas or artwork._bagsSlotTexture ~= texture then
+			if atlas then artwork:SetAtlas(atlas, false) else artwork:SetTexture(texture) end
+			artwork._bagsSlotAtlas, artwork._bagsSlotTexture = atlas, texture
+		end
+		setTextureInsets(artwork, button, iconInset, true)
+		ensureTextureMask(artwork, button.BagsShapeIconMask)
+		artwork:Show()
+	elseif button.BagsShapeSlotArtwork then
+		button.BagsShapeSlotArtwork:Hide()
 	end
 
 	if normalTexture then
@@ -1461,6 +1556,7 @@ function addon.SetSkinPreset(value)
 	end
 
 	settings.skinPreset = presetID
+	if Bags.Toolbar then Bags.Toolbar.RefreshAll() end
 	return true
 end
 
@@ -1537,6 +1633,21 @@ function addon.ApplyFrameBackgroundSkin(frame, skin)
 		backingR, backingG, backingB, backingA = unpackColor(definition.backdropColor, 1)
 	end
 	local requestedOpacity = (addon.GetFrameBackgroundOpacity and addon.GetFrameBackgroundOpacity() or 60) / 100
+	local header = frame.SkinHeaderTexture
+	if skin.headerColor then
+		if not header then
+			header = frame:CreateTexture(nil, "BACKGROUND", nil, -6)
+			header:SetPoint("TOPLEFT", frame, "TOPLEFT", 4, -4)
+			header:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -4, -4)
+			header:SetHeight(28)
+			frame.SkinHeaderTexture = header
+		end
+		local r, g, b, a = unpackColor(skin.headerColor, 1)
+		header:SetColorTexture(r, g, b, a * requestedOpacity)
+		header:Show()
+	elseif header then
+		header:Hide()
+	end
 	local textureBaseAlpha = 0
 	local shadeBaseAlpha = 0
 
@@ -1627,7 +1738,8 @@ function addon.ApplyFrameBackgroundSkin(frame, skin)
 		local borderTextureSetting = addon.GetFrameBorderTexture and addon.GetFrameBorderTexture() or FRAME_BORDER_SKIN_VALUE
 		local borderSize = addon.GetFrameBorderSize and addon.GetFrameBorderSize() or 1
 		if borderTextureSetting == FRAME_BORDER_SKIN_VALUE then
-			borderTextureSetting = DEFAULT_FRAME_BORDER_TEXTURE
+			borderTextureSetting = skin.borderTexture or DEFAULT_FRAME_BORDER_TEXTURE
+			if skin.borderTexture and borderSize > 0 then borderSize = borderSize + 9 end
 		elseif addon.functions and addon.functions.ResolveLSMMedia then
 			borderTextureSetting = addon.functions.ResolveLSMMedia("border", borderTextureSetting, DEFAULT_FRAME_BORDER_TEXTURE, true) or DEFAULT_FRAME_BORDER_TEXTURE
 		end

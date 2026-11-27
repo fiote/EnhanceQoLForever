@@ -1,7 +1,12 @@
 local addon = _G.EnhanceQoL
-local H = { defaults = { headerTitleMode = "text", searchBorderTexture = "__skin__", searchBackgroundOpacity = 100 }, color = { 0.03, 0.03, 0.04 } }
+local H = { defaults = { headerTitleMode = "text", searchBorderTexture = "__skin__", searchBorderOpacity = 100, searchBackgroundOpacity = 100 }, color = { 0.03, 0.03, 0.04 } }
 addon.Bags.Header = H
 H.specialColors = { newItemsTitleColor = { 0.48, 0.82, 0.34 }, freeSlotsTitleColor = { 0.9, 0.78, 0.28 } }
+
+function H.GetSearchBorderBaseColor()
+ local skin = addon.GetActiveSkinDefinition().frame
+ return addon.GetFrameBorderColor(skin.borderColor)
+end
 
 function H.Get(key)
  local value = addon.GetSettings()[key]
@@ -16,7 +21,11 @@ function H.Get(key)
   local color = type(value) == "table" and value or H.color
   return { tonumber(color[1]) or H.color[1], tonumber(color[2]) or H.color[2], tonumber(color[3]) or H.color[3] }
  end
- if key == "searchBackgroundOpacity" then return math.max(0, math.min(100, tonumber(value) or 100)) end
+ if key == "searchBorderColor" then
+  if type(value) == "table" and value[1] and value[2] and value[3] then return value end
+  return H.GetSearchBorderBaseColor()
+ end
+ if key == "searchBackgroundOpacity" or key == "searchBorderOpacity" then return math.max(0, math.min(100, tonumber(value) or H.defaults[key])) end
  return type(value) == "string" and value or H.defaults[key]
 end
 function H.Refresh()
@@ -30,13 +39,14 @@ end
 function H.Set(key, value)
  if key == "headerTitleMode" then
   value = value == "hidden" and "hidden" or "text"
- elseif key == "searchBackgroundOpacity" then
-  value = math.floor(math.max(0, math.min(100, tonumber(value) or 100)) + .5)
+ elseif key == "searchBackgroundOpacity" or key == "searchBorderOpacity" then
+  value = math.floor(math.max(0, math.min(100, tonumber(value) or H.defaults[key])) + .5)
  elseif key == "newItemsSeparator" then
   value = value == true
- elseif key == "searchBackgroundColor" or H.specialColors[key] then
-  if type(value) ~= "table" then return end
-  value = { math.max(0, math.min(1, tonumber(value[1]) or 0)), math.max(0, math.min(1, tonumber(value[2]) or 0)), math.max(0, math.min(1, tonumber(value[3]) or 0)) }
+ elseif key == "searchBackgroundColor" or key == "searchBorderColor" or H.specialColors[key] then
+  if type(value) == "table" then
+   value = { math.max(0, math.min(1, tonumber(value[1]) or 0)), math.max(0, math.min(1, tonumber(value[2]) or 0)), math.max(0, math.min(1, tonumber(value[3]) or 0)) }
+  elseif key ~= "searchBorderColor" or value ~= nil then return end
  elseif key ~= "searchBorderTexture" then return end
  addon.GetSettings()[key] = value
  if key == "newItemsSeparator" or H.specialColors[key] then
@@ -105,24 +115,14 @@ function H.BorderOptions()
  table.insert(result,2,{value="__none__",label=_G.NONE})
  return result
 end
-function H.CustomSearch()
- if H.Get("searchBorderTexture") ~= "__skin__" or H.Get("searchBackgroundOpacity") ~= 100 then return true end
- local color=H.Get("searchBackgroundColor")
- for i=1,3 do if math.abs(color[i]-H.color[i])>.0001 then return true end end
- return false
-end
-function H.ApplySearchPadding(search, custom)
- if not search.searchIcon then return end
- if not search.HeaderContentInsets then
-  search.HeaderContentInsets={search:GetTextInsets()}
-  search.HeaderIconAnchor={search.searchIcon:GetPoint(1)}
- end
- local anchor=search.HeaderIconAnchor
- local inset=search.HeaderContentInsets
- local padding=custom and 4 or 0
+local function applySearchPadding(search)
+ if not search.searchIcon or search.HeaderPaddingApplied then return end
+ local left,right,top,bottom=search:GetTextInsets()
+ local point,relativeTo,relativePoint,x,y=search.searchIcon:GetPoint(1)
  search.searchIcon:ClearAllPoints()
- search.searchIcon:SetPoint(anchor[1],anchor[2],anchor[3],anchor[4]+padding,anchor[5])
- search:SetTextInsets(inset[1]+padding,inset[2],inset[3],inset[4])
+ search.searchIcon:SetPoint(point,relativeTo,relativePoint,x+4,y)
+ search:SetTextInsets(left+4,right,top,bottom)
+ search.HeaderPaddingApplied=true
 end
 function H.ApplySearch(frame)
  local search = frame.SearchBox
@@ -131,16 +131,11 @@ function H.ApplySearch(frame)
   search.HeaderNativeParts={}
   for _,key in ipairs({"Left","Middle","Right","LeftTexture","MiddleTexture","RightTexture"}) do
    local texture=search[key]
-   if texture and texture.GetAlpha then search.HeaderNativeParts[texture]=texture:GetAlpha() end
+   if texture and texture.SetAlpha then search.HeaderNativeParts[texture]=true end
   end
  end
- local custom=H.CustomSearch()
- H.ApplySearchPadding(search,custom)
- for texture,alpha in pairs(search.HeaderNativeParts) do texture:SetAlpha(custom and 0 or alpha) end
- if not custom then
-  if frame.SearchAppearance then frame.SearchAppearance:Hide() end
-  return
- end
+ applySearchPadding(search)
+ for texture in pairs(search.HeaderNativeParts) do texture:SetAlpha(0) end
  if not frame.SearchAppearance then
   frame.SearchAppearance=CreateFrame("Frame",nil,frame,"BackdropTemplate")
   frame.SearchAppearance:EnableMouse(false)
@@ -154,10 +149,9 @@ function H.ApplySearch(frame)
  surface:SetBackdrop({bgFile="Interface\\Buttons\\WHITE8X8",edgeFile=key~="__none__" and edge or nil,edgeSize=key=="__skin__" and 1 or 3})
  local color=H.Get("searchBackgroundColor")
  surface:SetBackdropColor(color[1],color[2],color[3],H.Get("searchBackgroundOpacity")/100)
- local skin=addon.GetActiveSkinDefinition().frame
- local border=addon.GetFrameBorderColor(skin.borderColor)
- surface:SetBackdropBorderColor(border[1],border[2],border[3],1)
- surface:Show()
+ local border=H.Get("searchBorderColor")
+ surface:SetBackdropBorderColor(border[1],border[2],border[3],H.Get("searchBorderOpacity")/100)
+ surface:SetShown(search:IsShown())
 end
 function H.Apply(frame,leftmost)
  if not (frame.SearchBox and frame.Title) then return end
@@ -166,9 +160,14 @@ function H.Apply(frame,leftmost)
  frame.Title:SetShown(mode=="text")
  local search=frame.SearchBox
  search:ClearAllPoints()
- if mode=="text" then search:SetPoint("TOPLEFT",frame.Title,"TOPRIGHT",18,2)
- else search:SetPoint("TOPLEFT",frame,"TOPLEFT",padding+5,-8) end
- if leftmost then search:SetPoint("TOPRIGHT",leftmost,"TOPLEFT",-10,-2)
- else search:SetPoint("TOPRIGHT",frame,"TOPRIGHT",-padding,-8) end
+ if frame.HeaderSearchRight then
+  search:SetPoint("LEFT",frame.Title,"RIGHT",18,0)
+  search:SetPoint("RIGHT",frame.HeaderSearchRight,"LEFT",-10,0)
+ else
+  if mode=="text" then search:SetPoint("TOPLEFT",frame.Title,"TOPRIGHT",18,2)
+  else search:SetPoint("TOPLEFT",frame,"TOPLEFT",padding+5,-8) end
+  if leftmost then search:SetPoint("TOPRIGHT",leftmost,"TOPLEFT",-10,-2)
+  else search:SetPoint("TOPRIGHT",frame,"TOPRIGHT",-padding,-8) end
+ end
  H.ApplySearch(frame)
 end

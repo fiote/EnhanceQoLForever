@@ -2,7 +2,7 @@
 ## X-EQOL-Flavor: forever
 ## Title: Enhance QoL Skinner
 ## Author: R41Z0R
-## Version: 13.24.4
+## Version: 13.24.5
 ## Notes: Character frame and Objective Tracker styling
 ## Notes-deDE: Charakterfenster- und Objective-Tracker-Styling
 ## Notes-esES: Estilo del marco de personaje y del seguimiento de objetivos

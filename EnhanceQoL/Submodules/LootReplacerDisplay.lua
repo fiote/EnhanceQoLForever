@@ -9,7 +9,7 @@ local MAX_RECEIPT_ROWS = 10
 local defaults = {
 	point = "TOPLEFT", relativePoint = "CENTER", x = 170, y = 60,
 	width = 320, scale = 1, rowHeight = 36, iconSize = 24, spacing = 3, sectionSpacing = 9,
-	rowSide = "LEFT",
+	rowSide = "LEFT", growthDirection = "DOWN",
 	font = "", fontSize = 13, outline = addon.functions.GetGlobalFontStyleConfigKey(), quality = true,
 	textAlign = "LEFT", textX = 0, textY = 0, textClassColor = false,
 	textColor = { r = 0.94, g = 0.92, b = 0.88, a = 1 },
@@ -86,7 +86,8 @@ end
 
 local function positionRow(row)
 	row:ClearAllPoints()
-	row:SetPoint("TOPLEFT", row.stackX, -row.stackY - (row.enterOffset or 0))
+	local y = row.stackUpward and row.stackY or -row.stackY
+	row:SetPoint(row.stackUpward and "BOTTOMLEFT" or "TOPLEFT", row.stackX, y - (row.enterOffset or 0))
 end
 
 local function rowMetrics(cfg, data)
@@ -614,6 +615,17 @@ function Loot:Render()
 	end
 
 	local width = cfg.width
+	local growUpward = cfg.growthDirection == "UP"
+	local stackPoint = growUpward and "BOTTOMLEFT" or "TOPLEFT"
+	local scroll = self.display:GetVerticalScroll()
+	local distanceFromAnchor = growUpward and math.max(0, self.display:GetVerticalScrollRange() - scroll) or scroll
+	if self.displayGrowsUpward ~= growUpward then
+		self.displayGrowsUpward = growUpward
+		distanceFromAnchor = 0
+		for row in pairs(self.retiring) do self:ReleaseRow(row) end
+	elseif growUpward and not self.display:IsShown() then
+		distanceFromAnchor = 0
+	end
 	local classColor = getClassColor()
 	local mirrored = cfg.rowSide == "RIGHT"
 	local style = {
@@ -643,7 +655,7 @@ function Loot:Render()
 			self.activeRows[key] = row
 		end
 		styleRow(row, data, cfg, width, self.preview, style)
-		row.stackX, row.stackY = outsetX, y
+		row.stackX, row.stackY, row.stackUpward = outsetX, y, growUpward
 		positionRow(row)
 		row:Show()
 		if fresh then
@@ -658,7 +670,8 @@ function Loot:Render()
 	if #rolls > 0 and #slots > 0 then y = y + cfg.sectionSpacing end
 	for _, data in ipairs(slots) do place(data, "slot:" .. data.key) end
 	if #slots > 0 then
-		self.footer:SetPoint("TOPLEFT", self.content, "TOPLEFT", outsetX, -y)
+		self.footer:ClearAllPoints()
+		self.footer:SetPoint(stackPoint, self.content, stackPoint, outsetX, growUpward and y or -y)
 		self.footer:SetWidth(width)
 		self.all:ClearAllPoints()
 		self.all:SetPoint("TOP" .. style.itemSide)
@@ -693,12 +706,15 @@ function Loot:Render()
 	local viewportWidth = width + outsetX * 2
 	self.content:SetSize(viewportWidth, y)
 	self.display:SetScale(cfg.scale)
-	self.display:SetPoint("TOPLEFT", self.anchor, "TOPLEFT", -outsetX, outsetY)
+	self.display:ClearAllPoints()
+	self.display:SetPoint(stackPoint, self.anchor, stackPoint, -outsetX, growUpward and -outsetY or outsetY)
 	local available = UIParent:GetHeight() / cfg.scale - 24
 	local height = math.min(y, math.max(48, math.min(380, available)))
 	self.display:SetSize(viewportWidth, height)
 	self.display:EnableMouseWheel(y > height)
-	self.display:SetVerticalScroll(math.min(self.display:GetVerticalScroll(), math.max(0, y - height)))
+	local scrollRange = math.max(0, y - height)
+	distanceFromAnchor = math.min(distanceFromAnchor, scrollRange)
+	self.display:SetVerticalScroll(growUpward and scrollRange - distanceFromAnchor or distanceFromAnchor)
 	self.display:Show()
 	self:UpdateJunkButtonParent(self.session and not self.preview and #slots > 0 and self.footer or nil)
 	self.rendering = nil
@@ -823,6 +839,9 @@ local function buildSettings()
 	slider("layout", "y", L["Offset Y"], -2000, 2000, 1)
 	slider("layout", "width", L["Width"], 220, 600, 1)
 	slider("layout", "scale", L["Scale"], 0.65, 1.6, 0.05, nil, formatDecimal)
+	dropdown("layout", "growthDirection", L["Growth direction"], function()
+		return { DOWN = L["Top to bottom"], UP = L["Bottom to top"] }, { "DOWN", "UP" }
+	end).navigationField = "growthDirection"
 	dropdown("layout", "rowSide", L["floatingLootRowAlignment"], sideOptions).navigationField = "rowSide"
 	slider("layout", "rowHeight", L["floatingLootRowHeight"], 22, 76, 1)
 	slider("layout", "iconSize", L["Icon size"], 14, 64, 1)

@@ -3,9 +3,7 @@ local M = addon.Bags.OfflineBank
 local L = addon.L
 local V = { sources = setmetatable({}, { __mode = "k" }) }
 M.Layout = V
-V.builtinSort = { equipment = "itemLevel", consumables = "count", tradegoods = "count", recipes = "quality", quest = "quality", misc = "quality" }
 V.sortFields = { itemLevel = "itemLevel", quality = "quality", name = "name", count = "count", sellPrice = "value", expansion = "expansionID", keystoneLevel = "keystoneLevel" }
-V.ignoredSlots = { [""] = true, INVTYPE_BAG = true, INVTYPE_BODY = true, INVTYPE_NON_EQUIP_IGNORE = true, INVTYPE_QUIVER = true, INVTYPE_TABARD = true }
 
 function V.CaptureItem(item, bagID, slotID, info)
 	item.isBound = info.isBound
@@ -22,14 +20,6 @@ function V.CaptureItem(item, bagID, slotID, info)
 	elseif item.ruleContext and (item.ruleContext.itemID ~= item.itemID or item.ruleContext.itemLink ~= item.link) then
 		item.ruleContext, V.sources[item] = nil, nil
 	end
-end
-
-function V.DefaultCategory(context)
-	if context.isQuestItem or context.questID or context.classID == 12 then return "quest" end
-	if context.equipLoc and not V.ignoredSlots[context.equipLoc] then return "equipment" end
-	local class = context.classID
-	if class == 2 or class == 4 then return "equipment" end
-	return ({ [0] = "consumables", [7] = "tradegoods", [9] = "recipes" })[class] or "misc"
 end
 
 function V.Context(item, metadata)
@@ -59,13 +49,14 @@ function V.Context(item, metadata)
 	context.professionGroupKey = context.professionGroupKey or (addon.GetProfessionGroupKeyForItem and addon.GetProfessionGroupKeyForItem(context.classID, context.subClassID, item.itemID))
 	context.itemLevel = capturedItemLevel or facts.itemLevel
 	context.canVendor = (context.sellPrice or 0) > 0
-	context.defaultCategory = V.DefaultCategory(context)
+	context.defaultCategory = addon.Bags.ItemRules.GetBankDefaultCategory(ref, context, context.equipLoc, context.classID)
 	context.offline, context.bagID, context.slotID = true, nil, nil
 	return context
 end
 
 function V.Sort(section)
-	local mode, reverse = addon.ResolveCategorySortMode(section.definition, V.builtinSort)
+	local definition = section.id == "all" and { id = "misc" } or section.definition
+	local mode, reverse = addon.ResolveCategorySortMode(definition, addon.Bags.ItemRules.bankBuiltinSortModes)
 	local field = mode and V.sortFields[mode]
 	if not field then return end
 	table.sort(section.items, function(a, b)
@@ -77,7 +68,8 @@ function V.Sort(section)
 		end
 		if a.quality ~= b.quality then return a.quality > b.quality end
 		if a.name ~= b.name then return a.name < b.name end
-		return a.order < b.order
+		if a.bagID ~= b.bagID then return a.bagID < b.bagID end
+		return a.slotID < b.slotID
 	end)
 end
 
@@ -85,12 +77,17 @@ function V.Build(snapshot)
 	local settings = addon.GetSettings()
 	local oneBag = addon.GetOneBagMode()
 	local categories = settings.showCategories == true and not oneBag
-	local definitions = categories and addon.GetCategorySectionDefinitions() or { { id = "all", sortMode = addon.ResolveCategorySortMode({ id = "misc" }, V.builtinSort), collapsible = false } }
-	local sections, byID, metadata, count = {}, {}, {}, 0
+	local definitions = categories and addon.GetCategorySectionDefinitions() or { { id = "all", collapsible = false } }
+	local sections, byID, metadata = {}, {}, {}
 	for _, definition in ipairs(definitions) do
 		local section = { id = definition.id, definition = definition, items = {}, combined = {} }
 		sections[#sections + 1], byID[definition.id] = section, section
 	end
+	if byID.freeSlots and addon.IsCategorySectionHidden("freeSlots") then byID.freeSlots = nil end
+	local freeSection = settings.showFreeSlots ~= false and byID[categories and "freeSlots" or "all"]
+	local freeAtEnd = oneBag and addon.GetOneBagFreeSlotsAtEnd and addon.GetOneBagFreeSlotsAtEnd()
+	local combineFree = not oneBag and settings.combineFreeSlots
+	local pendingFreeSlots, combinedFreeSlot = {}
 	for _, bagID in ipairs(snapshot and snapshot.order or {}) do
 		local bag = snapshot.bags[bagID]
 		for slotID = 1, bag.slots do
@@ -112,8 +109,7 @@ function V.Build(snapshot)
 						row.count = row.count + (item.count or 1)
 						row.value = row.price * row.count
 					else
-						count = count + 1
-						row = { item = item, bagID = bagID, slotID = slotID, count = item.count or 1, order = count, desaturated = section.definition.desaturateItems == true,
+						row = { item = item, bagID = bagID, slotID = slotID, count = item.count or 1, desaturated = section.definition.desaturateItems == true,
 							name = string.lower(context.itemName or ""), quality = context.quality or -1,
 							price = context.sellPrice or 0, itemLevel = context.itemLevel or 0,
 							expansionID = context.expansionID or -1, keystoneLevel = tonumber((item.link or ""):match("keystone:%d+:%d+:(%d+)")) or 0 }
@@ -122,15 +118,27 @@ function V.Build(snapshot)
 						if key then section.combined[key] = row end
 					end
 				end
+			elseif freeSection then
+				local row = { freeSlot = true, bagID = bagID, slotID = slotID, count = 1 }
+				if combineFree then
+					if combinedFreeSlot then combinedFreeSlot.count = combinedFreeSlot.count + 1
+					else combinedFreeSlot = row end
+				elseif freeAtEnd or not oneBag then
+					pendingFreeSlots[#pendingFreeSlots + 1] = row
+				else
+					freeSection.items[#freeSection.items + 1] = row
+				end
 			end
 		end
 	end
 	local visible = {}
 	for _, section in ipairs(sections) do
-		if #section.items > 0 then
-			if not oneBag then V.Sort(section) end
-			visible[#visible + 1] = section
+		if not oneBag then V.Sort(section) end
+		if section == freeSection then
+			for _, row in ipairs(pendingFreeSlots) do section.items[#section.items + 1] = row end
+			if combinedFreeSlot then section.items[#section.items + 1] = combinedFreeSlot end
 		end
+		if #section.items > 0 then visible[#visible + 1] = section end
 	end
 	return visible
 end
@@ -140,12 +148,12 @@ function V.Options()
 	local size, spacing = math.max(24, math.floor(37 * scale + 0.5)), math.max(2, math.floor(4 * scale + 0.5))
 	local indent = addon.GetCategoryTreeView() and addon.GetCategoryTreeIndent() or 0
 	local frameScale = addon.GetBagFrameScale() / 100
-	frameScale = math.min(frameScale, (UIParent:GetWidth() - 40) / math.max(480, size * 4 + spacing * 3 + indent * 2 + 60), (UIParent:GetHeight() - 40) / 300)
+	frameScale = math.min(frameScale, (UIParent:GetWidth() - 40) / math.max(420, size * 4 + spacing * 3 + indent * 2 + 60), (UIParent:GetHeight() - 40) / 300)
 	local available = math.max(size * 4 + spacing * 3, UIParent:GetWidth() / frameScale - 100 - indent * 2)
 	local columns = math.max(4, math.min(addon.GetBankMaxColumns(), math.floor((available + spacing) / (size + spacing))))
 	return { size = size, spacing = spacing, columns = columns, width = columns * (size + spacing) - spacing,
 		scale = frameScale, gap = addon.GetCompactCategoryGap(), compact = addon.GetSettings().showCategories and not addon.GetOneBagMode() and addon.GetCompactCategoryLayout(),
-		indent = indent }
+		indent = indent, wrap = addon.GetSettings().compactCategoryWrap }
 end
 
 function V.Collapsed(id)
@@ -186,10 +194,18 @@ function V.Header(label, color, key, element, x, y, width, height)
 	header:Show()
 end
 
+function V.MeasureHeader(label, element, maxWidth)
+	V.measure = V.measure or M.content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	V.measure:Hide()
+	addon.ApplyConfiguredFont(V.measure, nil, element)
+	V.measure:SetText(addon.FormatTextElement(element, label))
+	return math.min(maxWidth, math.ceil(V.measure:GetStringWidth()) + 16)
+end
+
 function V.Metrics(section, options)
 	local definition = section.definition
 	local header = definition.label or definition.labelKey
-	local collapsed = definition.collapsible ~= false and V.Collapsed(section.id)
+	local collapsed = definition.collapsible == true and V.Collapsed(section.id)
 	local columns = math.max(1, math.min(options.columns, #section.items))
 	local rows = collapsed and 0 or math.ceil(#section.items / columns)
 	local element = definition.groupID and "subcategoryHeader" or "categoryHeader"
@@ -197,28 +213,29 @@ function V.Metrics(section, options)
 	local headerHeight = header and math.max(18, appearance.size + 4) or 0
 	local headerWidth = 0
 	if header then
-		V.measure = V.measure or M.content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-		V.measure:Hide()
-		addon.ApplyConfiguredFont(V.measure, nil, element)
-		V.measure:SetText(addon.FormatTextElement(element, definition.label or L[definition.labelKey]))
-		headerWidth = math.min(options.width, math.ceil(V.measure:GetStringWidth()) + 16)
+		headerWidth = V.MeasureHeader(definition.label or L[definition.labelKey], element, options.width)
 	end
+	local itemWidth = columns * (options.size + options.spacing) - options.spacing
 	return { itemCount = #section.items, sectionColumnCount = options.columns, visibleColumns = columns, rows = rows,
-		blockWidth = columns * (options.size + options.spacing) - options.spacing,
+		blockWidth = collapsed and math.max(headerWidth, itemWidth) or itemWidth,
 		blockHeight = headerHeight + (headerHeight > 0 and rows > 0 and 6 or 0) + rows * (options.size + options.spacing) - (rows > 0 and options.spacing or 0),
 		headerHeight = headerHeight, headerWidth = headerWidth, collapsed = collapsed }
 end
 
-function V.BlockWidth(_, metrics)
-	return math.max(metrics.blockWidth + V.currentOptions.indent, metrics.headerWidth)
+function V.ContentIndent(section, options)
+	return section.definition.collapsible == true and not section.definition.groupID and options.indent or 0
+end
+
+function V.BlockWidth(section, metrics)
+	return math.max(metrics.blockWidth + V.ContentIndent(section, V.currentOptions), metrics.headerWidth)
 end
 
 function V.PlaceSection(section, options, metrics, x, y, width)
 	local definition = section.definition
 	local header = definition.label or (definition.labelKey and L[definition.labelKey])
-	local indent = header and options.indent or 0
+	local indent = V.ContentIndent(section, options)
 	if header then
-		V.Header(header, definition.color, definition.collapsible ~= false and section.id or nil,
+		V.Header(header, definition.color, definition.collapsible == true and section.id or nil,
 			definition.groupID and "subcategoryHeader" or "categoryHeader", x, y, width, metrics.headerHeight)
 		y = y + metrics.headerHeight + (not metrics.collapsed and 6 or 0)
 	end
@@ -232,35 +249,80 @@ function V.PlaceSection(section, options, metrics, x, y, width)
 		button:ClearAllPoints()
 		button:SetPoint("TOPLEFT", M.content, "TOPLEFT", x + indent + ((index - 1) % metrics.visibleColumns) * (options.size + options.spacing),
 			-y - math.floor((index - 1) / metrics.visibleColumns) * (options.size + options.spacing))
-		button.Icon:SetTexture(row.item.icon or C_Item.GetItemIconByID(row.item.itemID) or 134400)
+		local item = row.item
+		button.searchName = row.name
+		local texture = item and (item.icon or C_Item.GetItemIconByID(item.itemID) or 134400)
+		button.Icon:SetTexture(texture)
 		button.Icon:SetDesaturated(row.desaturated or definition.desaturateItems == true)
-		button._bagsRenderTexture = row.item.icon or C_Item.GetItemIconByID(row.item.itemID) or 134400
-		addon.ApplyItemButtonSkin(button, row.item.quality)
+		button._bagsRenderTexture = texture
+		button._bagsFreeSlotDisplayMode = row.freeSlot and addon.GetFreeSlotDisplayMode() or nil
+		button._bagsFreeSlotColor = button._bagsFreeSlotDisplayMode == "colors" and addon.GetFreeSlotColor("normal") or nil
+		if button._bagsFreeSlotDisplayMode == "icons" and addon.GetResolvedIconShapeID() == "default" then
+			if not M.isTBC and C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo("bags-item-slot64") then
+				button.Icon:SetAtlas("bags-item-slot64")
+			else
+				button.Icon:SetTexture("Interface\\Buttons\\UI-EmptySlot-Disabled")
+			end
+		end
+		addon.ApplyItemButtonSkin(button, item and item.quality)
+		addon.Bags.functions.ApplyItemUsabilityVisual(button, item and V.IsUnusable(item, options.usability))
 		addon.ApplyConfiguredFont(button.Count, nil, "stackCount")
-		local anchor = addon.GetStackCountAnchor()
-		button.Count:ClearAllPoints()
-		button.Count:SetPoint(anchor, button, anchor, anchor:find("LEFT") and 2 or -2, anchor:find("TOP") and -2 or 2)
 		button.Count:SetText(row.count > 1 and row.count or "")
+		addon.ApplyStackCountLayout(button)
 		button:Show()
+	end
+end
+
+function V.IsUnusable(item, cache)
+	local ref = item.link or ("item:" .. item.itemID)
+	if cache[ref] == nil then
+		local data = C_TooltipInfo and C_TooltipInfo.GetHyperlink and C_TooltipInfo.GetHyperlink(ref)
+		local functions = addon.Bags.functions
+		local flags = data and data.lines and functions.ReadBankItemTooltipFlags(data.lines, {})
+		cache[ref] = functions.IsBankItemUnusable(item.itemID, item.link, flags)
+	end
+	return cache[ref]
+end
+
+function V.ApplySearch()
+	local searchBox = M.frame.SearchBox
+	local text = searchBox and searchBox:GetText() or ""
+	local lower = strlower or string.lower
+	local query = lower(text:match("^%s*(.-)%s*$"))
+	for index = 1, V.buttonCount or 0 do
+		local button = M.buttons[index]
+		local matched = query == ""
+		local item = button.item
+		if not matched and item then
+			local name = button.searchName
+			if name == "" then
+				name = (item.link or ""):match("|h%[(.-)%]|h") or (C_Item.GetItemNameByID and C_Item.GetItemNameByID(item.itemID)) or ""
+				button.searchName = name ~= "" and lower(name) or ""
+			end
+			matched = lower(name):find(query, 1, true) or tostring(item.itemID) == query
+		end
+		button.searchOverlay:SetShown(not matched)
 	end
 end
 
 function V.Render(snapshot)
 	local options = V.Options()
+	options.usability = {}
 	V.currentOptions = options
 	M.frame:SetScale(options.scale)
-	M.frame:SetWidth(math.max(480, options.width + options.indent * 2 + 60))
-	M.frame:SetHeight(math.min(480, UIParent:GetHeight() / options.scale - 40))
-	M.content:SetWidth(M.frame:GetWidth() - 58)
 	local skin = addon.GetActiveSkinDefinition().frame
 	addon.ApplyFrameBackgroundSkin(M.frame, skin)
 	M.frame:SetBackdropBorderColor(0, 0, 0, 0)
+	local divider = M.frame.Divider
+	local color = skin and skin.dividerColor or { 1, 1, 1, 0.08 }
+	divider:SetColorTexture(color[1] or 1, color[2] or 1, color[3] or 1, color[4] or 0.08)
+	divider:SetShown(snapshot ~= nil)
 	local sections = V.Build(snapshot)
 	M.sections = sections
 	V.headerCount, V.buttonCount = 0, 0
 	V.spacers = V.spacers or {}
 	local spacerCount = 0
-	local y, index, activeGroup = 0, 1, nil
+	local y, index, widest, activeGroup = 0, 1, 0, nil
 	while index <= #sections do
 		local section = sections[index]
 		local definition = section.definition
@@ -270,7 +332,9 @@ function V.Render(snapshot)
 				if definition.groupSpacerBefore and y > 0 then y = y + 14 end
 				if not definition.groupHideTitle then
 					local height = math.max(18, addon.GetResolvedTextAppearance("categoryHeader").size + 4)
-					V.Header(definition.groupLabel, definition.groupColor, definition.groupCollapseID, "categoryHeader", 0, y, options.width, height)
+					local groupWidth = V.MeasureHeader(definition.groupLabel, "categoryHeader", options.width)
+					V.Header(definition.groupLabel, definition.groupColor, definition.groupCollapseID, "categoryHeader", 0, y, groupWidth, height)
+					widest = math.max(widest, groupWidth)
 					y = y + height + 6
 				end
 			end
@@ -280,7 +344,6 @@ function V.Render(snapshot)
 			spacerCount = spacerCount + 1
 			local line = V.spacers[spacerCount]
 			if not line then line = M.content:CreateTexture(nil, "ARTWORK"); V.spacers[spacerCount] = line end
-			local color = skin and skin.dividerColor or { 1, 1, 1, 0.08 }
 			line:ClearAllPoints(); line:SetPoint("TOPLEFT", M.content, "TOPLEFT", 0, -y)
 			line:SetPoint("RIGHT", M.content, "RIGHT", 0, 0); line:SetHeight(1)
 			line:SetColorTexture(color[1] or 1, color[2] or 1, color[3] or 1, color[4] or 0.08)
@@ -296,31 +359,45 @@ function V.Render(snapshot)
 			until index > #sections or sections[index].definition.groupID ~= activeGroup or not sections[index].definition.groupCombineSubcategories or sections[index].definition.spacerBefore
 			local metrics = V.Metrics(combined, options)
 			V.PlaceSection(combined, options, metrics, options.indent, y, options.width)
+			widest = math.max(widest, options.indent + V.BlockWidth(combined, metrics))
 			y = y + metrics.blockHeight + 10
 		else
 			local entries, group = {}, definition.groupID
-			local last = index
+			local compact = options.compact and section.id ~= "freeSlots" and not definition.spacerBefore
+			local last, rowWidth, height = index, 0, 0
+			local rowIndent = group and options.indent or 0
+			local maxWidth = options.width - rowIndent
 			repeat
 				local candidate = sections[last]
 				local metrics = V.Metrics(candidate, options)
+				local nextWidth = V.BlockWidth(candidate, metrics) + (#entries > 0 and options.gap or 0)
+				if #entries > 0 and not options.wrap and rowWidth + nextWidth > maxWidth then break end
 				entries[#entries + 1] = { section = candidate, metrics = metrics, collapsed = metrics.collapsed }
+				rowWidth, height = rowWidth + nextWidth, math.max(height, metrics.blockHeight)
 				last = last + 1
-			until not options.compact or last > #sections or sections[last].definition.groupID ~= group or sections[last].definition.groupCombineSubcategories or sections[last].definition.spacerBefore
-			local row, _, height
-			if options.compact then
-				row, _, height = addon.Bags.PlanCompactRow(entries, options.width - (group and options.indent or 0), options.gap, options.size, options.spacing, 10, V.BlockWidth)
-			else row, height = { entries[1] }, entries[1].metrics.blockHeight end
-			local x = group and options.indent or 0
+			until not compact or last > #sections or sections[last].id == "freeSlots" or sections[last].definition.groupID ~= group
+				or sections[last].definition.groupCombineSubcategories or sections[last].definition.spacerBefore
+			local row = entries
+			if compact and options.wrap then
+				row, _, height = addon.Bags.PlanCompactRow(entries, maxWidth, options.gap, options.size, options.spacing, 10, V.BlockWidth)
+			end
+			local x = rowIndent
 			for _, entry in ipairs(row) do
-				local width = options.compact and V.BlockWidth(entry.section, entry.metrics) or options.width
+				local width = V.BlockWidth(entry.section, entry.metrics)
 				V.PlaceSection(entry.section, options, entry.metrics, x, y, width)
 				x = x + width + options.gap
 			end
+			widest = math.max(widest, x - options.gap)
 			index = index + #row
 			y = y + height + 10
 		end
 	end
 	for i = spacerCount + 1, #V.spacers do V.spacers[i]:Hide() end
-	if snapshot and #sections == 0 then V.Header(EMPTY, nil, nil, "categoryHeader", 0, 0, options.width, 20); y = 24 end
-	M.content:SetHeight(math.max(1, y))
+	if snapshot and #sections == 0 then
+		local width = V.MeasureHeader(EMPTY, "categoryHeader", options.width)
+		V.Header(EMPTY, nil, nil, "categoryHeader", 0, 0, width, 20)
+		widest, y = width, 24
+	end
+	M.SizeToContent(widest, math.max(1, y), options.scale, snapshot ~= nil)
+	V.ApplySearch()
 end

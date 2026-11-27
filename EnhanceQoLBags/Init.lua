@@ -124,6 +124,7 @@ local defaultSettings = {
 	categoryQuickAdd = true,
 	showNewItems = true,
 	clearNewItemsOnHeaderClick = false,
+	newItemsAutoClearDelay = -1,
 	rememberLastBankTab = true,
 	useIntegratedBank = true,
 	combineFreeSlots = true,
@@ -155,6 +156,7 @@ local defaultSettings = {
 	toolbarSpacing = 4,
 	headerTitleMode = "text",
 	searchBorderTexture = "__skin__",
+	searchBorderOpacity = 100,
 	searchBackgroundColor = { 0.03, 0.03, 0.04 },
 	searchBackgroundOpacity = 100,
 	toolbarIconColor = { 0.92, 0.73, 0.37, 1 },
@@ -532,7 +534,7 @@ function addon.GetCurrentCharacterGUID()
 	return getCurrentCharacterGUID()
 end
 
-local function getCurrentMoneyRuleset()
+function addon.Bags.GetCurrentRuleset()
 	local rules = Enum and Enum.GameRule
 	local isActive = C_GameRules and C_GameRules.IsGameRuleActive
 	if rules and isActive and rules.HardcoreRuleset and rules.RPRuleset and rules.PvPRuleset then
@@ -564,7 +566,7 @@ function addon.UpdateTrackedCharacterMoney()
 		lastSeen = time and time() or 0,
 	}
 	if isForever then
-		info.ruleset = getCurrentMoneyRuleset()
+		info.ruleset = addon.Bags.GetCurrentRuleset()
 		info.faction = UnitFactionGroup("player")
 	end
 	tracker[characterGUID] = info
@@ -598,7 +600,7 @@ function addon.GetTrackedCharacterGoldEntries(currentRulesetOnly)
 	local currentGUID = getCurrentCharacterGUID()
 	local entries = {}
 	local isScoped = currentRulesetOnly and addon.variables and addon.variables.isForever and not addon.variables.isTBC
-	local currentRuleset = isScoped and getCurrentMoneyRuleset()
+	local currentRuleset = isScoped and addon.Bags.GetCurrentRuleset()
 
 	for guid, info in pairs(tracker) do
 		if type(info) == "table" and tonumber(info.money) ~= nil then

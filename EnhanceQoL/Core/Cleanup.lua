@@ -197,6 +197,11 @@ local LEGACY_RESOURCE_BAR_EDIT_MODE_IDS = {
 -- imported between game flavors. Forever ignores them and uses healthUseFood
 -- independently, so a disabled Retail mage-food option cannot disable general food.
 local LEGACY_PROFILE_KEYS = {
+	"mailboxAddressBookLocked",
+	"mailboxAddressBookPoint",
+	"mailboxAddressBookRelativePoint",
+	"mailboxAddressBookX",
+	"mailboxAddressBookY",
 	"queryAddonProfilerEnabled",
 	"queryAddonProfilerDelay",
 	"queryFollowupEnabled",
@@ -1698,6 +1703,13 @@ function addon.functions.CleanupMicroBarSizing()
 end
 
 local function cleanupAuctionSalesOptions()
+	local function cleanupBags(db)
+		local settings = type(db) == "table" and db.settings
+		if type(settings) == "table" then settings.showAuctionValueDelta = nil end
+	end
+	cleanupBags(_G.EnhanceQoLBagsDB)
+	if addon.DB ~= _G.EnhanceQoLBagsDB then cleanupBags(addon.DB) end
+
 	local function cleanup(profile)
 		if type(profile) == "table" then profile.vendorAuctionSavePrices = nil end
 	end

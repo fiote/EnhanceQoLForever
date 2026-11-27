@@ -2,7 +2,7 @@
 ## X-EQOL-Flavor: forever
 ## Title: Enhance QoL Mover
 ## Author: R41Z0R
-## Version: 13.24.4
+## Version: 13.24.5
 ## Notes: Move Blizzard frames
 ## Notes-deDE: Verschiebt Blizzard-Fenster
 ## Notes-esES: Mueve marcos de Blizzard

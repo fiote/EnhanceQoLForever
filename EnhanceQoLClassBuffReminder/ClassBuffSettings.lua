@@ -281,6 +281,79 @@ local function renderTable(parent)
 end
 
 local controlOrder = (addon.ConfigControlOrder or 0) + 10
+local soloKey = "classBuffReminderShowSolo"
+local consumablesKey = "classBuffReminderKeybindConsumables"
+app:RegisterControl(pageID, {
+	id = soloKey,
+	key = soloKey,
+	type = "toggle",
+	label = L["ClassBuffReminderShowSolo"],
+	groupID = groupID,
+	groupTitle = groupTitle,
+	order = controlOrder - 3,
+	default = Reminder.defaults.showSolo,
+	isEnabled = function() return Reminder:IsEnabled() end,
+	setValue = function(value)
+		addon.db[soloKey] = value == true
+		Reminder:OnSettingChanged()
+	end,
+})
+
+app:RegisterControl(pageID, {
+	id = consumablesKey,
+	key = consumablesKey,
+	type = "toggle",
+	label = L["ClassBuffReminderKeybindConsumables"],
+	description = L["ClassBuffReminderKeybindConsumablesDesc"],
+	groupID = groupID,
+	groupTitle = groupTitle,
+	order = controlOrder - 2,
+	default = false,
+	newTagID = "ClassBuffReminderKeybindConsumables",
+	isEnabled = function() return Reminder:IsEnabled() end,
+	getValue = function() return addon.db[consumablesKey] == true end,
+	setValue = function(value)
+		addon.db[consumablesKey] = value == true
+		Reminder:OnSettingChanged()
+	end,
+})
+
+app:RegisterControl(pageID, {
+	id = "ClassBuffReminderAdvancedSettings",
+	type = "button",
+	label = L["ClassBuffReminderAdvancedSettings"],
+	description = L["ClassBuffReminderEditModeHint"],
+	buttonText = L["configCenterConfigure"],
+	groupID = groupID,
+	groupTitle = groupTitle,
+	order = controlOrder - 1,
+	newTagID = "ClassBuffReminderAdvancedSettings",
+	isEnabled = function() return Reminder:IsEnabled() end,
+	onClick = function()
+		if not Reminder:IsEnabled() then return end
+		if InCombatLockdown and InCombatLockdown() then
+			if UIErrorsFrame and ERR_NOT_IN_COMBAT then UIErrorsFrame:AddMessage(ERR_NOT_IN_COMBAT, 1, 0, 0) end
+			return
+		end
+		local editMode = addon.EditMode
+		local entry = editMode and editMode.frames.classBuffReminder
+		local lib = addon.EditModeLib
+		if not (entry and entry.preparedSettings and lib) or lib:IsInEditMode() then return end
+		local registration = entry.navigationRegistration
+		local navigation = registration.settingsNavigation
+		if navigation == nil then navigation = addon.EditModeNavigationProfiles.Get(entry.id, registration) end
+		local dialog = lib:ShowStandaloneSettingsDialog(entry.frame, {
+			title = entry.title,
+			settings = entry.preparedSettings,
+			settingsNavigation = navigation,
+			buttons = {},
+			showReset = false,
+			point = "CENTER",
+		})
+		if dialog then addon.functions.HideConfigCenterUntilFrameHidden(dialog) end
+	end,
+})
+
 app:RegisterControl(pageID, {
 	id = CLASS_ID,
 	type = "dropdown",
